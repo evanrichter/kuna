@@ -79,6 +79,12 @@ pub fn apply_cookie_rewrites(tokens: &mut Vec<EmitToken>, rewrites: &[CookieRewr
                 varref: None,
                 at: None,
                 type_name: None,
+                symref: None,
+                blockref: None,
+                type_id: None,
+                occurrence: 0,
+                seqnum: None,
+                comment: None,
                 ..keyword.clone()
             });
         tokens.retain(|t| t.line != rw.assignment_line && t.line != rw.return_line);
@@ -88,6 +94,24 @@ pub fn apply_cookie_rewrites(tokens: &mut Vec<EmitToken>, rewrites: &[CookieRewr
         semi.col = rw.indent + 8;
         let at = tokens.iter().position(|t| t.line > rw.return_line).unwrap_or(tokens.len());
         tokens.splice(at..at, [keyword, value, semi]);
+    }
+}
+
+/// Give each token with an `opref` its op's sequence number in `fd`.
+pub fn bind_seqnums(tokens: &mut [EmitToken], fd: &Funcdata) {
+    let mut seqnums = BTreeMap::new();
+    for (_, op_id) in fd.obank().iter_all() {
+        let Some(op) = fd.obank().get(op_id) else { continue };
+        let seq = op.get_seq_num();
+        if let Some(space) = seq.get_addr().get_space() {
+            seqnums.insert(
+                op.get_time() as u64,
+                (space.get_index(), seq.get_addr().get_offset(), seq.get_order()),
+            );
+        }
+    }
+    for t in tokens {
+        t.seqnum = t.opref.and_then(|o| seqnums.get(&o).copied());
     }
 }
 

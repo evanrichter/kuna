@@ -78,8 +78,8 @@ use kuna_base::types::{int4, int8, uint4, uintb};
 use crate::dtype::type_metatype;
 use crate::options::{BraceStyle, NamespaceStrategy};
 use crate::prettyprint::{
-    BraceStyle as EmitBraceStyle, Emit, EmitBase, EmitMarkup, EmitNoMarkup, MarkupProvenance,
-    MarkupRef, SyntaxHighlight,
+    BraceStyle as EmitBraceStyle, CommentKind, Emit, EmitBase, EmitMarkup, EmitNoMarkup,
+    MarkupProvenance, MarkupRef, SyntaxHighlight,
 };
 use crate::printlanguage::{
     format_binary, modifiers, most_natural_base, parentheses, unicode_needs_escape, Atom, OpToken,
@@ -646,6 +646,22 @@ impl PrintCOptions {
 // ===========================================================================
 // Self-contained constant / type formatting
 // ===========================================================================
+
+/// (kuna) The [`CommentKind`] of a comment-database type mask.
+pub fn comment_kind(tp: uint4) -> CommentKind {
+    use crate::comment::comment_type as ct;
+    if tp & ct::WARNING != 0 {
+        CommentKind::Warning
+    } else if tp & ct::WARNINGHEADER != 0 {
+        CommentKind::WarningHeader
+    } else if tp & ct::HEADER != 0 {
+        CommentKind::Header
+    } else if tp & (ct::USER1 | ct::USER2 | ct::USER3) != 0 {
+        CommentKind::User
+    } else {
+        CommentKind::Other
+    }
+}
 
 /// The first run of decimal digits in `s`, parsed — the `{changes}` count a
 /// count-carrying warning text embeds.
@@ -1438,9 +1454,11 @@ impl Emit for PrintEmit {
     fn tag_field(&mut self, name: &str, hl: SyntaxHighlight, off: int4, markup: &MarkupRef) { pe_forward!(self.tag_field(name, hl, off, markup)) }
     fn tag_bit_field(&mut self, name: &str, hl: SyntaxHighlight, id: int4, markup: &MarkupRef) { pe_forward!(self.tag_bit_field(name, hl, id, markup)) }
     fn tag_comment(&mut self, name: &str, hl: SyntaxHighlight, spc: &std::rc::Rc<AddrSpace>, off: uintb) { pe_forward!(self.tag_comment(name, hl, spc, off)) }
+    fn tag_comment_kind(&mut self, name: &str, hl: SyntaxHighlight, spc: &std::rc::Rc<AddrSpace>, off: uintb, kind: CommentKind) { pe_forward!(self.tag_comment_kind(name, hl, spc, off, kind)) }
     fn tag_label(&mut self, name: &str, hl: SyntaxHighlight, spc: &std::rc::Rc<AddrSpace>, off: uintb) { pe_forward!(self.tag_label(name, hl, spc, off)) }
     fn tag_case_label(&mut self, name: &str, hl: SyntaxHighlight, markup: &MarkupRef, value: uintb) { pe_forward!(self.tag_case_label(name, hl, markup, value)) }
     fn print(&mut self, data: &str, hl: SyntaxHighlight) { pe_forward!(self.print(data, hl)) }
+    fn print_comment(&mut self, data: &str, hl: SyntaxHighlight, kind: CommentKind) { pe_forward!(self.print_comment(data, hl, kind)) }
 
     fn open_paren(&mut self, paren: &str, id: int4) -> int4 { pe_forward!(self.open_paren(paren, id)) }
     fn close_paren(&mut self, paren: &str, id: int4) { pe_forward!(self.close_paren(paren, id)) }
@@ -1592,7 +1610,7 @@ pub struct PrintC {
     /// as one `// slug, slug` end-of-line comment by
     /// [`flush_eol_warnings`](PrintC::flush_eol_warnings) at the owning line's
     /// last token (statement `;`, `if (cond) {` header, prototype, ...).
-    pub(crate) eol_warns: Vec<(String, std::rc::Rc<kuna_base::space::AddrSpace>, u64)>,
+    pub(crate) eol_warns: Vec<(String, std::rc::Rc<kuna_base::space::AddrSpace>, u64, CommentKind)>,
     /// Per-document spelling for a local HighVariable whose recovered name
     /// collides in the C function scope. Body references consume the same map.
     local_name_overrides: std::collections::HashMap<crate::context::HighVariableId, String>,
@@ -1825,9 +1843,10 @@ impl PrintC {
         // Until those passes land, the body slot is a single marker line so the
         // shell is a complete, brace-matched function.
         self.emit.tag_line();
-        self.emit.print(
+        self.emit.print_comment(
             "/* WARNING: body emission blocked on upstream decompilation passes (raw p-code IR) */",
             SyntaxHighlight::CommentColor,
+            CommentKind::Failure,
         );
         // (kuna warnstyle, DIV-39) drain any slug still pending from a
         // construct with no closer flush point onto the last body line, so no
@@ -2755,7 +2774,7 @@ impl PrintC {
                     "/* WARNING: structured blocks unavailable (structuring declined) */".to_string()
                 }
             };
-            self.emit.print(&text, SyntaxHighlight::CommentColor);
+            self.emit.print_comment(&text, SyntaxHighlight::CommentColor, CommentKind::Failure);
         }
         // (kuna warnstyle, DIV-39) drain any slug still pending from a
         // construct with no closer flush point onto the last body line, so no
@@ -3112,11 +3131,12 @@ impl PrintC {
             .collect();
         for text in plates {
             self.emit.tag_line();
-            self.emit.tag_comment(
+            self.emit.tag_comment_kind(
                 &format!("/* {text} */"),
                 SyntaxHighlight::CommentColor,
                 &space,
                 off,
+                CommentKind::Header,
             );
         }
         // Collect the matching header WARNING comments (the commentdb borrow is
@@ -3134,16 +3154,22 @@ impl PrintC {
             // (kuna warnstyle, DIV-39) Inline mode: header warnings collect as
             // slugs and flush at the end of the prototype line.
             if self.options.warn_inline {
-                self.eol_warns.push((warning_slug(&text), std::rc::Rc::clone(&space), off));
+                self.eol_warns.push((
+                    warning_slug(&text),
+                    std::rc::Rc::clone(&space),
+                    off,
+                    CommentKind::WarningHeader,
+                ));
                 continue;
             }
             // emitLineComment(0, comm): a fresh line then the `/* text */` token.
             self.emit.tag_line();
-            self.emit.tag_comment(
+            self.emit.tag_comment_kind(
                 &format!("/* {text} */"),
                 SyntaxHighlight::CommentColor,
                 &space,
                 off,
+                CommentKind::WarningHeader,
             );
         }
     }
@@ -3824,7 +3850,13 @@ impl PrintC {
             if arch.name_style_angr {
                 if let Some((ctext, spc, off)) = comment {
                     self.emit.spaces(1, 0);
-                    self.emit.tag_comment(&format!("// {ctext}"), SyntaxHighlight::CommentColor, &spc, off);
+                    self.emit.tag_comment_kind(
+                        &format!("// {ctext}"),
+                        SyntaxHighlight::CommentColor,
+                        &spc,
+                        off,
+                        CommentKind::Storage,
+                    );
                 }
             }
         }
@@ -4543,12 +4575,13 @@ impl PrintC {
                         warning_slug(&text_str),
                         space,
                         addr.get_offset(),
+                        CommentKind::Warning,
                     ));
                     self.commsorter.mark_last_emitted();
                     continue;
                 }
             }
-            self.emit_line_comment(-1, &text, &addr);
+            self.emit_line_comment(-1, &text, &addr, comment_kind(tp));
             // emitLineComment sets comm->setEmitted(true) (printlanguage.cc:655),
             // so a later walk over the same window skips it.
             self.commsorter.mark_last_emitted();
@@ -4569,19 +4602,31 @@ impl PrintC {
         let (space, off) = (std::rc::Rc::clone(&warns[0].1), warns[0].2);
         let joined =
             warns.iter().map(|w| w.0.as_str()).collect::<Vec<_>>().join(", ");
+        let kind = if warns.iter().all(|w| w.3 == CommentKind::WarningHeader) {
+            CommentKind::WarningHeader
+        } else {
+            CommentKind::Warning
+        };
         self.emit.spaces(1, 0);
-        self.emit.tag_comment(
+        self.emit.tag_comment_kind(
             &format!("// {joined}"),
             SyntaxHighlight::CommentColor,
             &space,
             off,
+            kind,
         );
     }
 
     /// C++ `PrintLanguage::emitLineComment` (printlanguage.cc:596): a fresh line
     /// (at the comment indent) carrying `/* <text> */`.  The default C delimiters
     /// are `/* ` / ` */`; a negative `indent` uses the configured comment indent.
-    fn emit_line_comment(&mut self, indent: int4, text: &[u8], addr: &kuna_base::address::Address) {
+    fn emit_line_comment(
+        &mut self,
+        indent: int4,
+        text: &[u8],
+        addr: &kuna_base::address::Address,
+        kind: CommentKind,
+    ) {
         let indent = if indent < 0 { self.context.line_comment_indent() } else { indent };
         let (space, off) = match addr.get_space() {
             Some(s) => (std::rc::Rc::clone(s), addr.get_offset()),
@@ -4589,11 +4634,12 @@ impl PrintC {
         };
         self.emit.tag_line_indent(indent);
         let body = String::from_utf8_lossy(text);
-        self.emit.tag_comment(
+        self.emit.tag_comment_kind(
             &format!("/* {body} */"),
             SyntaxHighlight::CommentColor,
             &space,
             off,
+            kind,
         );
     }
 
