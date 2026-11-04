@@ -55,7 +55,7 @@ use std::rc::Rc;
 use kuna_base::error::{KunaError, KunaResult};
 use kuna_base::marshal::{Encoder, PackedEncode};
 use kuna_base::space::AddrSpace;
-use kuna_base::types::{int4, uintb};
+use kuna_base::types::{int4, uintb, uintm};
 
 /// Marshaling element/attribute ids used by the markup emitter.
 ///
@@ -277,6 +277,41 @@ impl TokenKind {
     }
 }
 
+/// (kuna) Where a comment in the emitted C came from, so a consumer can
+/// filter comments without matching their text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommentKind {
+    /// A `Comment::warning` attached to a statement (inline `// slug` or a
+    /// `/* WARNING: ... */` line).
+    Warning,
+    /// A `Comment::warningheader` attached to the function entry.
+    WarningHeader,
+    /// A `Comment::header` (plate) comment above the prototype.
+    Header,
+    /// A user comment (`Comment::user1`..`user3`).
+    User,
+    /// The storage note an angr-style local declaration ends with.
+    Storage,
+    /// The marker that stands in for a body the printer could not render.
+    Failure,
+    /// A comment emitted without naming its origin.
+    Other,
+}
+
+impl CommentKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            CommentKind::Warning => "warning",
+            CommentKind::WarningHeader => "warningheader",
+            CommentKind::Header => "header",
+            CommentKind::User => "user",
+            CommentKind::Storage => "storage",
+            CommentKind::Failure => "failure",
+            CommentKind::Other => "other",
+        }
+    }
+}
+
 /// One non-blank token of the markup stream, placed where the plain-text
 /// emitter puts the same text: `line` counts line breaks from the start of the
 /// document, `col` is in UTF-16 code units, and surrounding spaces are trimmed.
@@ -296,6 +331,21 @@ pub struct EmitToken {
     pub in_var_decl: bool,
     pub in_return_type: bool,
     pub in_proto: bool,
+    pub symref: Option<uintb>,
+    pub blockref: Option<int4>,
+    pub type_id: Option<uintb>,
+    /// How many earlier tokens of the same render carry this token's
+    /// (`opref`, `varref`) pair; 0 for a token with neither.  It counts in
+    /// emission order, so the two operands of `x * x` are 0 and 1 in the order
+    /// they print, not by input slot.
+    pub occurrence: u32,
+    /// The `opref` op's sequence number: its address's space index and offset,
+    /// and its order within its block.  Bound after capture
+    /// ([`crate::kuna_srcmap::bind_seqnums`]).
+    pub seqnum: Option<(int4, uintb, uintm)>,
+    /// Where a comment came from; set on comment tokens and on syntax that
+    /// stands in for a comment ([`Emit::print_comment`]).
+    pub comment: Option<CommentKind>,
 }
 
 /// The column model of [`EmitNoMarkup`] replayed beside [`EmitMarkup`]: a line
@@ -308,6 +358,7 @@ struct TokenCapture {
     return_type: usize,
     proto: usize,
     mute: usize,
+    occurrences: std::collections::BTreeMap<(Option<uintb>, Option<uintb>), u32>,
     out: Vec<EmitToken>,
 }
 
@@ -324,10 +375,13 @@ impl TokenCapture {
         color: SyntaxHighlight,
         markup: Option<&MarkupRef>,
         at: Option<(int4, uintb)>,
+        comment: Option<CommentKind>,
     ) {
         if self.mute > 0 {
             return;
         }
+        let opref = markup.and_then(|m| m.opref);
+        let varref = markup.and_then(|m| m.varref);
         for (i, seg) in text.split('\n').enumerate() {
             if i > 0 {
                 self.line += 1;
@@ -336,19 +390,33 @@ impl TokenCapture {
             let body = seg.trim_matches(' ');
             if !body.is_empty() {
                 let lead = seg.len() - seg.trim_start_matches(' ').len();
+                let occurrence = match (opref, varref) {
+                    (None, None) => 0,
+                    key => {
+                        let n = self.occurrences.entry(key).or_default();
+                        *n += 1;
+                        *n - 1
+                    }
+                };
                 self.out.push(EmitToken {
                     line: self.line,
                     col: self.col + lead,
                     text: body.to_string(),
                     kind,
                     color,
-                    opref: markup.and_then(|m| m.opref),
-                    varref: markup.and_then(|m| m.varref),
+                    opref,
+                    varref,
                     at,
                     type_name: markup.and_then(|m| m.type_name.clone()),
                     in_var_decl: self.var_decl > 0,
                     in_return_type: self.return_type > 0,
                     in_proto: self.proto > 0,
+                    symref: markup.and_then(|m| m.symref),
+                    blockref: markup.and_then(|m| m.blockref),
+                    type_id: markup.and_then(|m| m.type_id),
+                    occurrence,
+                    seqnum: None,
+                    comment,
                 });
             }
             self.col += seg.encode_utf16().count();
@@ -444,6 +512,18 @@ pub trait Emit {
     /// mirrors the C++ `const AddrSpace *` (shared, long-lived) as an
     /// [`Rc<AddrSpace>`].
     fn tag_comment(&mut self, name: &str, hl: SyntaxHighlight, spc: &Rc<AddrSpace>, off: uintb);
+    /// (kuna) [`Emit::tag_comment`] naming where the comment came from.
+    /// Default: the plain call, dropping `kind`.
+    fn tag_comment_kind(
+        &mut self,
+        name: &str,
+        hl: SyntaxHighlight,
+        spc: &Rc<AddrSpace>,
+        off: uintb,
+        _kind: CommentKind,
+    ) {
+        self.tag_comment(name, hl, spc, off)
+    }
     /// Emit a code-label identifier.  `spc`/`off` is the labeled code address.
     fn tag_label(&mut self, name: &str, hl: SyntaxHighlight, spc: &Rc<AddrSpace>, off: uintb);
     /// Emit a `case` label constant.  `value` is the raw switch value;
@@ -451,6 +531,11 @@ pub trait Emit {
     fn tag_case_label(&mut self, name: &str, hl: SyntaxHighlight, markup: &MarkupRef, value: uintb);
     /// Emit other (more unusual) syntax (spaces, semicolons, braces, …).
     fn print(&mut self, data: &str, hl: SyntaxHighlight);
+    /// (kuna) [`Emit::print`] of syntax that stands in for a comment of
+    /// `kind`.  Default: the plain call, dropping `kind`.
+    fn print_comment(&mut self, data: &str, hl: SyntaxHighlight, _kind: CommentKind) {
+        self.print(data, hl)
+    }
 
     // --- parentheses / groups ---
 
@@ -1046,7 +1131,20 @@ impl EmitMarkup {
         at: Option<(int4, uintb)>,
     ) {
         if let Some(c) = self.capture.as_mut() {
-            c.push(text, kind, color, markup, at);
+            c.push(text, kind, color, markup, at, None);
+        }
+    }
+
+    fn capture_comment(
+        &mut self,
+        text: &str,
+        kind: TokenKind,
+        color: SyntaxHighlight,
+        at: Option<(int4, uintb)>,
+        comment: CommentKind,
+    ) {
+        if let Some(c) = self.capture.as_mut() {
+            c.push(text, kind, color, None, at, Some(comment));
         }
     }
 
@@ -1073,6 +1171,17 @@ impl EmitMarkup {
         if self.capture.is_some() {
             self.capture = Some(TokenCapture::default());
         }
+    }
+
+    fn encode_syntax(&mut self, data: &str, hl: SyntaxHighlight) {
+        self.with_encoder(|e| {
+            e.open_element(&ids::ELEM_SYNTAX);
+            if hl != SyntaxHighlight::NoColor {
+                e.write_unsigned_integer(&ids::ATTRIB_COLOR, hl.value());
+            }
+            e.write_string(&ids::ATTRIB_CONTENT, data.as_bytes());
+            e.close_element(&ids::ELEM_SYNTAX);
+        });
     }
 
     fn record_association(&mut self, markup: &MarkupRef) {
@@ -1430,7 +1539,17 @@ impl Emit for EmitMarkup {
         });
     }
     fn tag_comment(&mut self, name: &str, hl: SyntaxHighlight, spc: &Rc<AddrSpace>, off: uintb) {
-        self.capture(name, TokenKind::Comment, hl, None, Some((spc.get_index(), off)));
+        self.tag_comment_kind(name, hl, spc, off, CommentKind::Other);
+    }
+    fn tag_comment_kind(
+        &mut self,
+        name: &str,
+        hl: SyntaxHighlight,
+        spc: &Rc<AddrSpace>,
+        off: uintb,
+        kind: CommentKind,
+    ) {
+        self.capture_comment(name, TokenKind::Comment, hl, Some((spc.get_index(), off)), kind);
         self.with_encoder(|e| {
             e.open_element(&ids::ELEM_COMMENT);
             if hl != SyntaxHighlight::NoColor {
@@ -1475,14 +1594,11 @@ impl Emit for EmitMarkup {
     fn print(&mut self, data: &str, hl: SyntaxHighlight) {
         let kind = if hl == SyntaxHighlight::ConstColor { TokenKind::Value } else { TokenKind::Syntax };
         self.capture(data, kind, hl, None, None);
-        self.with_encoder(|e| {
-            e.open_element(&ids::ELEM_SYNTAX);
-            if hl != SyntaxHighlight::NoColor {
-                e.write_unsigned_integer(&ids::ATTRIB_COLOR, hl.value());
-            }
-            e.write_string(&ids::ATTRIB_CONTENT, data.as_bytes());
-            e.close_element(&ids::ELEM_SYNTAX);
-        });
+        self.encode_syntax(data, hl);
+    }
+    fn print_comment(&mut self, data: &str, hl: SyntaxHighlight, kind: CommentKind) {
+        self.capture_comment(data, TokenKind::Syntax, hl, None, kind);
+        self.encode_syntax(data, hl);
     }
     fn open_paren(&mut self, paren: &str, id: int4) -> int4 {
         self.capture(paren, TokenKind::Syntax, SyntaxHighlight::NoColor, None, None);

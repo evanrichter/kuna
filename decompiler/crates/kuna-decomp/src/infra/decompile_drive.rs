@@ -2437,6 +2437,7 @@ pub fn print_c_with_srcmap(
     });
     let (out, edits) = rewrite_cookie_literal_returns_with_edits(out, &cookie_calls, &mut markup);
     crate::kuna_srcmap::apply_cookie_rewrites(&mut tokens, &edits);
+    crate::kuna_srcmap::bind_seqnums(&mut tokens, fd);
     align_markup_to_trimmed(&mut markup, &out);
     (out, resolve_markup_provenance(fd, &markup), tokens)
 }

@@ -727,4 +727,68 @@ mod capture {
         markup.set_output_stream();
         assert!(markup.take_tokens().is_empty());
     }
+
+    fn square(e: &mut dyn Emit) {
+        let x = MarkupRef { opref: Some(5), varref: Some(7), symref: Some(9), ..MarkupRef::none() };
+        let s = e.begin_statement(&MarkupRef::op(Some(5)));
+        e.tag_variable("x", SyntaxHighlight::VarColor, &x);
+        e.tag_op(" * ", SyntaxHighlight::NoColor, &MarkupRef::op(Some(5)));
+        e.tag_variable("x", SyntaxHighlight::VarColor, &x);
+        e.end_statement(s);
+    }
+
+    /// (kuna) The two reads of `x` in `x * x` share op and varnode; the
+    /// occurrence ordinal tells them apart in print order, and a new render
+    /// counts from 0 again.
+    #[test]
+    fn a_repeated_operand_counts_its_occurrences() {
+        let mut markup = EmitMarkup::new();
+        markup.set_capture_tokens(true);
+        square(&mut markup);
+        let tokens = markup.take_tokens();
+        let seen: Vec<_> =
+            tokens.iter().map(|t| (t.text.as_str(), t.opref, t.varref, t.occurrence)).collect();
+        assert_eq!(
+            seen,
+            [("x", Some(5), Some(7), 0), ("*", Some(5), None, 0), ("x", Some(5), Some(7), 1)]
+        );
+        assert!(tokens.iter().filter(|t| t.text == "x").all(|t| t.symref == Some(9)));
+        markup.set_output_stream();
+        square(&mut markup);
+        assert_eq!(markup.take_tokens()[2].occurrence, 1);
+    }
+
+    fn commented(e: &mut dyn Emit, spc: &Rc<AddrSpace>) {
+        e.tag_comment_kind("/* w */", SyntaxHighlight::CommentColor, spc, 0x10, CommentKind::Warning);
+        e.tag_line();
+        e.tag_comment("/* plain */", SyntaxHighlight::CommentColor, spc, 0x10);
+        e.tag_line();
+        e.print_comment("/* failed */", SyntaxHighlight::CommentColor, CommentKind::Failure);
+        e.tag_line();
+        e.print("x", SyntaxHighlight::NoColor);
+    }
+
+    /// (kuna) A comment's kind reaches its token and leaves the text alone;
+    /// a comment that names no kind is `Other`, and plain syntax has none.
+    #[test]
+    fn comment_kinds_reach_the_tokens() {
+        let spc: Rc<AddrSpace> = Rc::new(ConstantSpace::new());
+        let mut plain = EmitNoMarkup::new();
+        commented(&mut plain, &spc);
+        let mut markup = EmitMarkup::new();
+        markup.set_capture_tokens(true);
+        commented(&mut markup, &spc);
+        let tokens = markup.take_tokens();
+        let seen: Vec<_> = tokens.iter().map(|t| (t.kind, t.comment)).collect();
+        assert_eq!(
+            seen,
+            [
+                (TokenKind::Comment, Some(CommentKind::Warning)),
+                (TokenKind::Comment, Some(CommentKind::Other)),
+                (TokenKind::Syntax, Some(CommentKind::Failure)),
+                (TokenKind::Syntax, None),
+            ]
+        );
+        assert_eq!(rebuild(&tokens), trimmed_lines(plain.output()).trim_end_matches('\n'));
+    }
 }

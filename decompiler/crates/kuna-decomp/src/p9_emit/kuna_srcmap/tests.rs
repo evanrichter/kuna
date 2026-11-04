@@ -14,6 +14,12 @@ fn raw(line: usize, col: usize, text: &str, kind: TokenKind) -> EmitToken {
         in_var_decl: false,
         in_return_type: false,
         in_proto: false,
+        symref: None,
+        blockref: None,
+        type_id: None,
+        occurrence: 0,
+        seqnum: None,
+        comment: None,
     }
 }
 
