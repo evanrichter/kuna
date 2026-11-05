@@ -156,6 +156,9 @@ pub struct ArchWarning {
     pub addr: Address,
     /// The comment text (already prefixed with "WARNING: " by the caller).
     pub text: String,
+    /// (kuna) The user tag the printer carries to the comment's token
+    /// ([`crate::comment::NO_USER_TAG`] when none).
+    pub user_tag: u8,
 }
 
 /// \brief A minimal stand-in for the C++ `CommentDatabase` warning sink.
@@ -202,6 +205,7 @@ impl CommentDatabase {
             func_addr: fad.clone(),
             addr: ad.clone(),
             text: txt.to_string(),
+            user_tag: crate::comment::NO_USER_TAG,
         });
         true
     }
@@ -210,11 +214,26 @@ impl CommentDatabase {
     /// console `comment instr` path which — unlike the warning sink — does not
     /// de-duplicate).
     pub fn add_comment(&mut self, tp: uint4, fad: &Address, ad: &Address, txt: &str) {
+        self.add_comment_tagged(tp, fad, ad, txt, crate::comment::NO_USER_TAG);
+    }
+
+    /// (kuna) [`CommentDatabase::add_comment`] with a user tag, an opaque byte
+    /// the printer carries to the comment's token as
+    /// [`CommentKind::User`](crate::prettyprint::CommentKind::User).
+    pub fn add_comment_tagged(
+        &mut self,
+        tp: uint4,
+        fad: &Address,
+        ad: &Address,
+        txt: &str,
+        user_tag: u8,
+    ) {
         self.comments.push(ArchWarning {
             tp,
             func_addr: fad.clone(),
             addr: ad.clone(),
             text: txt.to_string(),
+            user_tag,
         });
     }
 

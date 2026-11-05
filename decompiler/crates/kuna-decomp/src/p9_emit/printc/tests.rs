@@ -3276,16 +3276,17 @@ mod pointer_argument_records {
 }
 
 /// (kuna) A comment-database type mask names its comment's kind; a warning
-/// bit wins over the user bits it may share a mask with.
+/// bit wins over the user bits it may share a mask with, and only a user
+/// comment keeps its tag.
 #[test]
 fn comment_types_map_to_comment_kinds() {
     use crate::comment::comment_type as ct;
-    assert_eq!(comment_kind(ct::WARNING), CommentKind::Warning);
-    assert_eq!(comment_kind(ct::WARNINGHEADER), CommentKind::WarningHeader);
-    assert_eq!(comment_kind(ct::HEADER), CommentKind::Header);
-    assert_eq!(comment_kind(ct::USER2), CommentKind::User);
-    assert_eq!(comment_kind(ct::USER2 | ct::WARNING), CommentKind::Warning);
-    assert_eq!(comment_kind(0), CommentKind::Other);
+    assert_eq!(comment_kind(ct::WARNING, 3), CommentKind::Warning);
+    assert_eq!(comment_kind(ct::WARNINGHEADER, 3), CommentKind::WarningHeader);
+    assert_eq!(comment_kind(ct::HEADER, 3), CommentKind::Header);
+    assert_eq!(comment_kind(ct::USER2, 3), CommentKind::User(3));
+    assert_eq!(comment_kind(ct::USER2 | ct::WARNING, 3), CommentKind::Warning);
+    assert_eq!(comment_kind(0, 3), CommentKind::Other);
 }
 
 mod rust_literal_atoms;
