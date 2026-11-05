@@ -647,8 +647,9 @@ impl PrintCOptions {
 // Self-contained constant / type formatting
 // ===========================================================================
 
-/// (kuna) The [`CommentKind`] of a comment-database type mask.
-pub fn comment_kind(tp: uint4) -> CommentKind {
+/// (kuna) The [`CommentKind`] of a comment-database type mask; a user
+/// comment keeps its `user_tag`.
+pub fn comment_kind(tp: uint4, user_tag: u8) -> CommentKind {
     use crate::comment::comment_type as ct;
     if tp & ct::WARNING != 0 {
         CommentKind::Warning
@@ -657,7 +658,7 @@ pub fn comment_kind(tp: uint4) -> CommentKind {
     } else if tp & ct::HEADER != 0 {
         CommentKind::Header
     } else if tp & (ct::USER1 | ct::USER2 | ct::USER3) != 0 {
-        CommentKind::User
+        CommentKind::User(user_tag)
     } else {
         CommentKind::Other
     }
@@ -4516,13 +4517,13 @@ impl PrintC {
     /// them so the sorter's block placement reads the same ordered set C++ does.
     fn setup_comments(&mut self, fd: &Funcdata, arch: &Architecture) {
         use crate::comment::comment_type as ct;
-        use crate::comment::{CommentDatabase, CommentDatabaseInternal};
+        use crate::comment::CommentDatabaseInternal;
         // head_comment_type | instr_comment_type (printlanguage.cc:586-589).
         let tp = ct::HEADER | ct::WARNINGHEADER | ct::USER2 | ct::WARNING;
         let mut db = CommentDatabaseInternal::new();
         let fad = fd.get_address();
         for w in arch.commentdb.comments().iter().filter(|w| &w.func_addr == fad) {
-            db.add_comment(w.tp, &w.func_addr, &w.addr, w.text.as_bytes());
+            db.add_comment_tagged(w.tp, &w.func_addr, &w.addr, w.text.as_bytes(), w.user_tag);
         }
         // option_unplaced is off by default (C++ resetDefaultsPrintC).
         if let Err(_e) = self.commsorter.setup_function_list(tp, fd, &db, false) {
@@ -4549,13 +4550,14 @@ impl PrintC {
         });
         self.commsorter.setup_op_list(landmark);
         while self.commsorter.has_next() {
-            let (emitted, tp, text, addr) = {
+            let (emitted, tp, text, addr, user_tag) = {
                 let comm = self.commsorter.get_next();
                 (
                     comm.is_emitted(),
                     comm.get_type(),
                     comm.get_text().to_vec(),
                     comm.get_addr().clone(),
+                    comm.get_user_tag(),
                 )
             };
             if emitted {
@@ -4581,7 +4583,7 @@ impl PrintC {
                     continue;
                 }
             }
-            self.emit_line_comment(-1, &text, &addr, comment_kind(tp));
+            self.emit_line_comment(-1, &text, &addr, comment_kind(tp, user_tag));
             // emitLineComment sets comm->setEmitted(true) (printlanguage.cc:655),
             // so a later walk over the same window skips it.
             self.commsorter.mark_last_emitted();

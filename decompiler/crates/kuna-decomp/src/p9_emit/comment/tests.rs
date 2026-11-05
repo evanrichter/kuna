@@ -561,3 +561,18 @@ fn sorter_no_ops_puts_comment_at_first_block() {
     }
     assert_eq!(texts, vec![b"anywhere".to_vec()]);
 }
+
+/// (kuna) A tagged comment keeps its tag in the database; an untagged one
+/// reads as `NO_USER_TAG`.
+#[test]
+fn add_comment_tagged_keeps_the_tag() {
+    assert_eq!(std::mem::size_of::<Option<crate::prettyprint::CommentKind>>(), 2);
+    let m = manager();
+    let fad = ram(&m, 0x1000);
+    let ad = ram(&m, 0x1010);
+    let mut db = CommentDatabaseInternal::new();
+    db.add_comment_tagged(comment_type::USER2, &fad, &ad, b"mine", 3);
+    db.add_comment(comment_type::USER2, &fad, &ad, b"anyone's");
+    let tags: Vec<_> = db.comments_for(&fad).map(|c| (c.get_uniq(), c.get_user_tag())).collect();
+    assert_eq!(tags, [(0, 3), (1, NO_USER_TAG)]);
+}

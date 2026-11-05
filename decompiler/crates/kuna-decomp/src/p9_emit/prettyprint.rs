@@ -288,8 +288,9 @@ pub enum CommentKind {
     WarningHeader,
     /// A `Comment::header` (plate) comment above the prototype.
     Header,
-    /// A user comment (`Comment::user1`..`user3`).
-    User,
+    /// A user comment (`Comment::user1`..`user3`), with the tag its caller
+    /// gave it ([`crate::comment::NO_USER_TAG`] when none).
+    User(u8),
     /// The storage note an angr-style local declaration ends with.
     Storage,
     /// The marker that stands in for a body the printer could not render.
@@ -304,7 +305,7 @@ impl CommentKind {
             CommentKind::Warning => "warning",
             CommentKind::WarningHeader => "warningheader",
             CommentKind::Header => "header",
-            CommentKind::User => "user",
+            CommentKind::User(_) => "user",
             CommentKind::Storage => "storage",
             CommentKind::Failure => "failure",
             CommentKind::Other => "other",

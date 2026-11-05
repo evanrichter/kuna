@@ -75,6 +75,9 @@ pub mod comment_type {
     pub const WARNINGHEADER: uint4 = 32;
 }
 
+/// (kuna) The user tag of a comment whose caller gave none.
+pub const NO_USER_TAG: u8 = 0xff;
+
 /// \brief A comment attached to a specific function and code address
 ///
 /// Contains the actual character data of the comment.  It is fundamentally
@@ -98,6 +101,9 @@ pub struct Comment {
     addr: Address,
     /// The body of the comment.
     text: Vec<u8>,
+    /// (kuna) An opaque byte the caller attaches to a user comment; the
+    /// printer carries it to the comment's token.
+    user_tag: u8,
     /// \b true if this comment has already been emitted.
     ///
     /// The C++ field is `mutable bool` (set through a `const Comment*`); the
@@ -107,7 +113,15 @@ pub struct Comment {
 
 impl Comment {
     pub fn new(tp: uint4, fad: Address, ad: Address, uq: int4, txt: &[u8]) -> Comment {
-        Comment { type_: tp, uniq: uq, funcaddr: fad, addr: ad, text: txt.to_vec(), emitted: false }
+        Comment {
+            type_: tp,
+            uniq: uq,
+            funcaddr: fad,
+            addr: ad,
+            text: txt.to_vec(),
+            user_tag: NO_USER_TAG,
+            emitted: false,
+        }
     }
 
     /// C++ `Comment(void)`, for use with decode: all fields are overwritten by
@@ -119,6 +133,7 @@ impl Comment {
             funcaddr: Address::default(),
             addr: Address::default(),
             text: Vec::new(),
+            user_tag: NO_USER_TAG,
             emitted: false,
         }
     }
@@ -157,6 +172,11 @@ impl Comment {
     /// Get the body of the comment (C++ `getText`).
     pub fn get_text(&self) -> &[u8] {
         &self.text
+    }
+
+    /// (kuna) The tag the caller gave this comment, or [`NO_USER_TAG`].
+    pub fn get_user_tag(&self) -> u8 {
+        self.user_tag
     }
 
     /// Encode the comment to a stream (C++ `Comment::encode`).
@@ -332,6 +352,34 @@ impl CommentDatabaseInternal {
         CommentDatabaseInternal { commentset: BTreeMap::new() }
     }
 
+    /// (kuna) [`CommentDatabase::add_comment`] that gives the comment a user
+    /// tag, which the printer carries to the comment's token.
+    pub fn add_comment_tagged(
+        &mut self,
+        tp: uint4,
+        fad: &Address,
+        ad: &Address,
+        txt: &[u8],
+        user_tag: u8,
+    ) {
+        // C++: build the probe Comment at uniq 65535, find lower_bound (first
+        // element >= probe), step back one to the "last element less than", and
+        // — if that predecessor shares (addr, funcaddr) — set uniq to its
+        // uniq+1.  Reproduced via the BTreeMap range cursor.
+        let mut newcom = Comment::new(tp, fad.clone(), ad.clone(), 65535, txt);
+        newcom.user_tag = user_tag;
+        let probe = CommentKey::of(&newcom);
+        // First element less than the probe (predecessor of lower_bound).
+        let pred = self.commentset.range(..probe).next_back();
+        newcom.uniq = 0;
+        if let Some((_, prev)) = pred {
+            if prev.get_addr() == ad && prev.get_func_addr() == fad {
+                newcom.uniq = prev.get_uniq() + 1;
+            }
+        }
+        self.commentset.insert(CommentKey::of(&newcom), newcom);
+    }
+
     /// The half-open key range covering every comment of function \b fad.
     ///
     /// C++ `beginComment`/`endComment` build probe Comments at
@@ -374,21 +422,7 @@ impl CommentDatabase for CommentDatabaseInternal {
     }
 
     fn add_comment(&mut self, tp: uint4, fad: &Address, ad: &Address, txt: &[u8]) {
-        // C++: build the probe Comment at uniq 65535, find lower_bound (first
-        // element >= probe), step back one to the "last element less than", and
-        // — if that predecessor shares (addr, funcaddr) — set uniq to its
-        // uniq+1.  Reproduced via the BTreeMap range cursor.
-        let mut newcom = Comment::new(tp, fad.clone(), ad.clone(), 65535, txt);
-        let probe = CommentKey::of(&newcom);
-        // First element less than the probe (predecessor of lower_bound).
-        let pred = self.commentset.range(..probe).next_back();
-        newcom.uniq = 0;
-        if let Some((_, prev)) = pred {
-            if prev.get_addr() == ad && prev.get_func_addr() == fad {
-                newcom.uniq = prev.get_uniq() + 1;
-            }
-        }
-        self.commentset.insert(CommentKey::of(&newcom), newcom);
+        self.add_comment_tagged(tp, fad, ad, txt, NO_USER_TAG);
     }
 
     fn add_comment_no_duplicate(

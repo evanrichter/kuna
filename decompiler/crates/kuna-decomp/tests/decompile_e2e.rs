@@ -523,3 +523,29 @@ fn maxinstruction_option_bounds_flow_following() {
         statements(&full)
     );
 }
+
+/// (kuna) A user comment's tag travels from the architecture's comment
+/// database to the comment's emitted token, and the plain C is unchanged.
+#[test]
+fn a_user_comment_tag_reaches_its_token() {
+    use kuna_decomp::comment::comment_type;
+    use kuna_decomp::decompile_drive::print_c_with_srcmap;
+    use kuna_decomp::prettyprint::CommentKind;
+
+    let dt = parse_datatest("boolless").expect("parse boolless");
+    let mut xarch = bootstrap(&dt).expect("bootstrap boolless");
+    let arch = xarch.sleigh_mut().base_mut().expect("Architecture base");
+    let sym = &dt.symbols[0];
+    let space = Rc::clone(arch.manage().get_space_by_name(&sym.space).expect("code space"));
+    let entry = Address::new(space, sym.offset);
+    arch.commentdb.add_comment_tagged(comment_type::USER2, &entry, &entry, "tagged", 7);
+    arch.commentdb.add_comment(comment_type::USER2, &entry, &entry, "untagged");
+
+    let fd = decompile_func(arch, &sym.name, entry, 0).expect("decompile boolless");
+    let plain = print_c(arch, &fd);
+    let (code, _, tokens) = print_c_with_srcmap(arch, &fd);
+    assert_eq!(code, plain);
+    let kind_of = |text: &str| tokens.iter().find(|t| t.text.contains(text)).and_then(|t| t.comment);
+    assert_eq!(kind_of("untagged"), Some(CommentKind::User(0xff)));
+    assert_eq!(kind_of("/* tagged"), Some(CommentKind::User(7)));
+}
