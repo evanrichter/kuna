@@ -167,6 +167,9 @@ pub struct XrefIndex {
     /// Function entries whose decoded body contains a `CALLIND`
     /// ([`XrefIndex::has_indirect_calls`]).
     indirect_callers: BTreeSet<u64>,
+    /// VMAs of the decoded `CALLIND` instructions
+    /// ([`XrefIndex::indirect_call_sites`]).
+    indirect_call_sites: BTreeSet<u64>,
     /// Forwarding veneers, keyed by function entry ([`veneer_at`]).
     veneers: BTreeMap<u64, Veneer>,
     /// The reverse of [`XrefIndex::veneers`]: a slot mapped to every veneer that
@@ -540,6 +543,16 @@ impl XrefIndex {
     /// the two can never name different functions.
     pub fn has_indirect_calls(&self, entry: u64) -> bool {
         self.indirect_callers.contains(&entry)
+    }
+
+    /// Every decoded `CALLIND` instruction, in address order: the sites
+    /// [`Self::has_indirect_calls`] folds onto their functions. A site's owner is
+    /// [`Self::function_containing`]; a site outside every reachable body of a
+    /// walk that keeps bodies has none, and no function reports it. A site whose destination is read straight
+    /// out of a slot also files a Call edge to that slot
+    /// ([`Self::refs_from_instruction`]); any other site files none.
+    pub fn indirect_call_sites(&self) -> impl Iterator<Item = u64> + '_ {
+        self.indirect_call_sites.iter().copied()
     }
 }
 
@@ -1721,8 +1734,8 @@ struct State {
     /// ordered: it is probed once per successor edge over the whole program.
     decoded: HashSet<u64>,
     funcs: BTreeSet<u64>,
-    /// VMAs of the decoded `CALLIND` instructions; folded onto their containing
-    /// function in [`State::finish`].
+    /// VMAs of the decoded `CALLIND` instructions; kept, and folded onto their
+    /// containing function, in [`State::finish`].
     indirect_call_sites: BTreeSet<u64>,
     flow: Option<FlowGraph>,
     switches: Vec<SwitchTable>,
@@ -1853,6 +1866,7 @@ impl State {
             funcs: self.funcs,
             body_owners,
             indirect_callers,
+            indirect_call_sites: self.indirect_call_sites,
             veneers,
             veneers_of_slot,
             insns,
@@ -1924,6 +1938,7 @@ fn empty() -> XrefIndex {
         funcs: BTreeSet::new(),
         body_owners: None,
         indirect_callers: BTreeSet::new(),
+        indirect_call_sites: BTreeSet::new(),
         veneers: BTreeMap::new(),
         veneers_of_slot: BTreeMap::new(),
         insns: 0,

@@ -91,3 +91,29 @@ fn an_indirect_branch_is_not_a_computed_call() {
     // The veneer's destination is not unknown, it is the slot it reads.
     assert_eq!(idx.veneer_slot(FORWARDING_VENEER), Some(0x601000));
 }
+
+/// Every `CALLIND` in `fauxware`'s code (`objdump -d`): `deregister_tm_clones`'s
+/// `CALL RAX`, `__do_global_dtors_aux`'s `CALL [0x600e38 + RAX*8]`,
+/// `__libc_csu_init`'s `CALL [R12 + RBX*8]` and `__do_global_ctors_aux`'s
+/// `CALL RAX`.
+const INDIRECT_CALL_SITES: [u64; 4] = [0x4005bc, 0x400613, 0x400839, 0x4008a4];
+
+#[test]
+fn each_computed_call_site_is_listed_once_in_address_order() {
+    let idx = index();
+    assert_eq!(idx.indirect_call_sites().collect::<Vec<_>>(), INDIRECT_CALL_SITES);
+}
+
+#[test]
+fn a_listed_site_belongs_to_a_function_reported_as_making_computed_calls() {
+    let idx = index();
+    for site in idx.indirect_call_sites() {
+        let owner = idx.function_containing(site).expect("a listed site is decoded code");
+        assert!(idx.has_indirect_calls(owner), "{site:#x}'s owner {owner:#x} is not reported");
+    }
+    assert_eq!(idx.function_containing(0x4008a4), Some(COMPUTED_CALL));
+    assert!(
+        idx.indirect_call_sites().all(|site| idx.function_containing(site) != Some(DIRECT_CALLS_ONLY)),
+        "a site was listed in main, whose calls are all direct"
+    );
+}
