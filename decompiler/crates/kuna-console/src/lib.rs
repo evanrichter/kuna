@@ -41,6 +41,7 @@ pub mod kuna_lazyfuncs;
 mod kuna_paramasserts;
 mod kuna_memorymap;
 pub mod kuna_inputtypes;
+pub mod kuna_localstructs;
 mod kuna_dwarfstack;
 pub mod kuna_buildstamp;
 pub mod consolemain;

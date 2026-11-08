@@ -529,6 +529,10 @@ pub struct InsnFlow {
 /// element id and dispatch it against the real architecture.
 pub struct ConsoleProgram {
     pub(crate) callwide: crate::kuna_callwide::State,
+    /// (kuna `structsynth`) The `struct_N` names held when
+    /// [`ConsoleProgram::set_local_synthesized_structs`] turned guessed
+    /// structures local to one decompile; `None` keeps the ledger program-wide.
+    pub(crate) local_structs: Option<kuna_decomp::kuna_structsynth::shard::AtLoad>,
     /// The engine assembly (owns the `Architecture` god object).  Both the XML
     /// `<binaryimage>` frontend and the real-ELF frontend slice their leaf
     /// architecture back to this `SleighArchitecture` once the loader is opened
@@ -4168,6 +4172,7 @@ fn empty_program(
 ) -> ConsoleProgram {
     ConsoleProgram {
         callwide: Default::default(),
+        local_structs: None,
         arch,
         registry,
         symbols: SymbolStream::default(),

@@ -41,13 +41,16 @@ impl ConsoleProgram {
     /// order. An input is rejected when no parameter lives in its storage,
     /// when its type's width differs from the parameter's, or when another
     /// input names the same storage. With no input applied, the function is
-    /// decompiled once, as the whole-binary loop decompiles it.
+    /// decompiled once, as the whole-binary loop decompiles it. With
+    /// [`ConsoleProgram::set_local_synthesized_structs`] on, it first destroys
+    /// the structures earlier decompiles guessed.
     pub fn decompile_with_input_types(
         &mut self,
         entry: &FunctionEntry,
         inputs: &[(Address, Rc<Datatype>)],
     ) -> KunaResult<(Funcdata, Vec<InputTypeOutcome>)> {
         let _load = self.arch().load_scope();
+        self.forget_synthesized_structs()?;
         let vma = entry.addr.get_offset();
         let mapped = self.dwarf_locals_for(vma);
         let declared = self.declared_extent(vma);
