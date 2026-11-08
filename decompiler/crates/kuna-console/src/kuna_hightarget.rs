@@ -468,6 +468,18 @@ pub fn apply_local(
         }
         LocalTarget::Symbol(sym) => sym,
     };
+    apply_symbol(fd, sym, newname, retype).map(Some)
+}
+
+/// Apply a `name`/`type` directive to the scope Symbol `sym`: rename it to
+/// `newname` (empty keeps the name) and, for a `type`, retype it to `retype`.
+/// A parameter's prototype slot follows (`crate::kuna_paramasserts`).
+pub(crate) fn apply_symbol(
+    fd: &mut Funcdata,
+    sym: SymbolId,
+    newname: &str,
+    retype: Option<Rc<Datatype>>,
+) -> Result<SymbolId, String> {
     let bound_size = fd
         .kuna_directive_symbols()
         .iter()
@@ -540,7 +552,7 @@ pub fn apply_local(
     if retype_given {
         fd.kuna_set_directive_retype(sym, unit_type);
     }
-    Ok(Some(sym))
+    Ok(sym)
 }
 
 /// Does any varnode live in `sym`'s storage? A local only ever reached

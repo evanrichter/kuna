@@ -14,7 +14,6 @@ use kuna_console::engine::{
     language_database, ArmIsa, Bootstrap, ConsoleProgram, LoadEntry, LoadMap, LoadRegion,
     RegionBytes,
 };
-use kuna_console::decompile_step::{decompile_one, DecompileSeed};
 use kuna_console::inspect::string_uses_in;
 use kuna_decomp::decompile_drive::print_c;
 use kuna_decomp::kuna_loadoptions::{environment_fallbacks, LoadOptions};
@@ -189,9 +188,8 @@ fn decompile(prog: &mut ConsoleProgram, func: &str) -> String {
     let entry = prog
         .find_entry_by_name(func)
         .unwrap_or_else(|| panic!("{func} is a function"));
-    let seed = DecompileSeed::plain(&[], &[]);
-    let fd = decompile_one(prog.arch_mut(), &entry.name, entry.addr.clone(), 0, &seed, &[])
-        .result
+    let (fd, _) = prog
+        .decompile_with_input_types(&entry, &[])
         .expect("decompile succeeds");
     print_c(prog.arch_mut(), &fd)
 }
@@ -223,9 +221,8 @@ fn volatile_accesses(prog: &mut ConsoleProgram, func: &str) -> Vec<(u64, bool, u
     let entry = prog
         .find_entry_by_name(func)
         .unwrap_or_else(|| panic!("{func} is a function"));
-    let seed = DecompileSeed::plain(&[], &[]);
-    let fd = decompile_one(prog.arch_mut(), &entry.name, entry.addr.clone(), 0, &seed, &[])
-        .result
+    let (fd, _) = prog
+        .decompile_with_input_types(&entry, &[])
         .expect("decompile succeeds");
     let mut out = Vec::new();
     for id in fd.obank().iter_alive() {

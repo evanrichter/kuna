@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use kuna_console::engine::{Bootstrap, ConsoleProgram};
-use kuna_console::project::{decompile_entry, DecompileOptions};
+use kuna_decomp::decompile_drive::print_c;
 use kuna_decomp::kuna_memoryspecs::{MemorySpecs, SpecRoot};
 
 const FUNCS: [&str; 3] = ["authenticate", "accepted", "main"];
@@ -78,9 +78,10 @@ fn decompile_all(prog: &mut ConsoleProgram) -> Vec<String> {
         .iter()
         .map(|func| {
             let entry = prog.find_entry_by_name(func).expect("function in fixture");
-            decompile_entry(prog, entry, &DecompileOptions::default())
-                .code
-                .expect("decompile succeeds")
+            let (fd, _) = prog
+                .decompile_with_input_types(&entry, &[])
+                .expect("decompile succeeds");
+            print_c(prog.arch_mut(), &fd)
         })
         .collect()
 }
@@ -116,7 +117,7 @@ fn a_memory_root_mixes_with_path_roots() {
     let entry = prog
         .find_entry_by_name("authenticate")
         .expect("function in fixture");
-    assert!(decompile_entry(&mut prog, entry, &DecompileOptions::default()).code.is_some());
+    assert!(prog.decompile_with_input_types(&entry, &[]).is_ok());
 }
 
 #[test]

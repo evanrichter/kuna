@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use kuna_base::error::KunaResult;
 use kuna_console::engine::{language_database, Bootstrap, ConsoleProgram};
-use kuna_console::project::{decompile_entry, DecompileOptions};
+use kuna_decomp::decompile_drive::print_c;
 use kuna_decomp::kuna_loadoptions::LoadOptions;
 use kuna_decomp::kuna_memoryspecs::SpecRoot;
 use kuna_decomp::sleigh_arch::LanguageDatabase;
@@ -37,9 +37,8 @@ fn decompile(mut prog: ConsoleProgram, funcs: &[&str]) -> (String, Vec<String>) 
         .iter()
         .map(|func| {
             let entry = prog.find_entry_by_name(func).expect("function in fixture");
-            decompile_entry(&mut prog, entry, &DecompileOptions::default())
-                .code
-                .expect("decompile succeeds")
+            let (fd, _) = prog.decompile_with_input_types(&entry, &[]).expect("decompile succeeds");
+            print_c(prog.arch_mut(), &fd)
         })
         .collect();
     (prog.arch().archid.clone(), c)

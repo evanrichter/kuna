@@ -304,7 +304,7 @@ fn console_decompile(prog: ConsoleProgram, name: &str) -> String {
 /// reads the program's own options, never a gate's environment fallback.
 #[test]
 fn an_explicit_program_never_reads_the_environment() {
-    use kuna_console::project::{decompile_entry, DecompileOptions};
+    use kuna_decomp::decompile_drive::print_c_with_srcmap;
     use kuna_decomp::kuna_loadoptions::environment_fallbacks;
     let go = go_image();
     let fat = root().join("decompiler/crates/kuna-analysis/tests/fixtures/macho_fat");
@@ -316,8 +316,10 @@ fn an_explicit_program_never_reads_the_environment() {
         for entry in entries.iter().take(6) {
             assert!(prog.find_entry_at(entry.addr.get_offset()).is_some());
             prog.has_symbol_named(&entry.name);
-            let result = decompile_entry(&mut prog, entry.clone(), &DecompileOptions::default());
-            assert!(result.code.is_some_and(|c| !c.is_empty()), "{:?}", result.error);
+            let (fd, _) = prog
+                .decompile_with_input_types(entry, &[])
+                .expect("decompiles");
+            assert!(!print_c_with_srcmap(prog.arch_mut(), &fd).0.is_empty());
         }
         let first = entries[0].clone();
         prog.ensure_function_symbol(first.addr.clone()).unwrap();
@@ -373,13 +375,14 @@ fn an_explicit_program_ignores_a_later_environment_change() {
 #[test]
 fn a_bootstrap_without_options_reads_the_environment() {
     use kuna_analysis::loadimage_te::synthetic::TeImage;
-    use kuna_console::project::{decompile_entry, DecompileOptions};
+    use kuna_decomp::decompile_drive::print_c;
 
     fn first_function(load: kuna_base::error::KunaResult<ConsoleProgram>) -> String {
         let mut prog = load.expect("bootstrap");
         prog.commit_pending_analysis().unwrap();
         let entry = prog.function_entries_executable()[0].clone();
-        decompile_entry(&mut prog, entry, &DecompileOptions::default()).code.unwrap()
+        let (fd, _) = prog.decompile_with_input_types(&entry, &[]).unwrap();
+        print_c(prog.arch_mut(), &fd)
     }
 
     struct ClearOnDrop;

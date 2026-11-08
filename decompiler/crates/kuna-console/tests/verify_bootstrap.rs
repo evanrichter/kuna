@@ -13,7 +13,7 @@ use kuna_console::engine::{
     language_database, ArmIsa, Bootstrap, ConsoleProgram, LoadEntry, LoadMap, LoadRegion,
     RegionBytes,
 };
-use kuna_console::project::{decompile_entry, DecompileOptions};
+use kuna_decomp::decompile_drive::print_c;
 use kuna_decomp::kuna_loadoptions::{environment_fallbacks, LoadOptions};
 
 const X86_64: &str = "x86:LE:64:default";
@@ -83,10 +83,9 @@ fn fingerprint(load: KunaResult<ConsoleProgram>) -> String {
         out += &format!("{} @ {:#x}\n", entry.name, entry.addr.get_offset());
     }
     for entry in entries.iter().take(3) {
-        let result = decompile_entry(&mut prog, entry.clone(), &DecompileOptions::default());
-        match result.code {
-            Some(code) => out += &code,
-            None => out += &format!("decompile error: {:?}\n", result.error),
+        match prog.decompile_with_input_types(entry, &[]) {
+            Ok((fd, _)) => out += &print_c(prog.arch_mut(), &fd),
+            Err(err) => out += &format!("decompile error: {err}\n"),
         }
     }
     out
