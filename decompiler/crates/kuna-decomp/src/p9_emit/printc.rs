@@ -2206,8 +2206,10 @@ impl PrintC {
         };
         let mut m = MarkupRef::none();
         m.opref = resolve_op_ref(fd, atom.op);
-        if let crate::printlanguage::AtomData::Vn(vn_key) = atom.data {
-            m.varref = resolve_var_ref(fd, vn_key);
+        match &atom.data {
+            crate::printlanguage::AtomData::Vn(vn_key) => m.varref = resolve_var_ref(fd, *vn_key),
+            crate::printlanguage::AtomData::Field(ct, off) => m.field = Some((ct.get_name().to_string(), *off)),
+            _ => {}
         }
         m
     }
@@ -2428,8 +2430,8 @@ use kuna_num::opcodes::OpCode;
 /// `Member` (`.field`); an array element becomes a `Subscript` (`[index]`).
 enum PartialEntry {
     /// `object_member` token: `.field` with the field's name + `ident`
-    /// (printc.cc:2046-2052).
-    Member(String, int4),
+    /// (printc.cc:2046-2052), its containing type and its byte offset there.
+    Member(String, int4, std::rc::Rc<crate::dtype::Datatype>, int4),
     /// `subscript` token: `[index]` for an array element (printc.cc:2062-2070).
     Subscript(int4),
     /// Artificial `object_member` with no backing field (C++ `entry.field == 0`,
@@ -7819,6 +7821,7 @@ impl PrintC {
                                             }
                                             let fname = f.name.clone();
                                             let fident = f.ident;
+                                            let parent = (std::rc::Rc::clone(&ct), f.offset);
                                             self.push_op(
                                                 &tokens::OBJECT_MEMBER,
                                                 Some(op_key(op)),
@@ -7828,7 +7831,7 @@ impl PrintC {
                                                 fname,
                                                 TagType::FieldToken,
                                                 crate::printlanguage::SyntaxHighlight::no_color,
-                                                0,
+                                                Some(parent),
                                                 fident,
                                                 op_key(op),
                                             ));
@@ -8805,7 +8808,7 @@ impl PrintC {
             Some(t) => t,
             None => return false,
         };
-        let mut field: Option<(String, int4)> = None; // (name, ident)
+        let mut field: Option<(String, int4, int4)> = None; // (name, ident, offset)
         if parent.needs_resolution()
             && parent.get_metatype() != crate::dtype::type_metatype::TYPE_PTR
         {
@@ -8817,13 +8820,13 @@ impl PrintC {
                         // STRUCT with fieldNum == 0: beginField().
                         crate::dtype::type_metatype::TYPE_STRUCT if field_num == 0 => {
                             if let Some(f) = parent.get_field(0) {
-                                field = Some((f.name.clone(), f.ident));
+                                field = Some((f.name.clone(), f.ident, f.offset));
                             }
                         }
                         // UNION: getField(fieldNum).
                         crate::dtype::type_metatype::TYPE_UNION => {
                             if let Some(f) = parent.get_field(field_num) {
-                                field = Some((f.name.clone(), f.ident));
+                                field = Some((f.name.clone(), f.ident, f.offset));
                             }
                         }
                         _ => {}
@@ -8835,7 +8838,7 @@ impl PrintC {
             Some(d) => d,
             None => return false,
         };
-        let (fieldname, fieldid) = match field {
+        let (fieldname, fieldid, fieldoff) = match field {
             Some(f) => f,
             // C++: the no-proceed path pushes the def op; the caller does it here.
             None => return false,
@@ -8846,7 +8849,7 @@ impl PrintC {
             fieldname,
             TagType::FieldToken,
             crate::printlanguage::SyntaxHighlight::no_color,
-            0,
+            Some((parent, fieldoff)),
             fieldid,
             op_key(op),
         );
@@ -9478,7 +9481,7 @@ impl PrintC {
             field.name.clone(),
             TagType::BitFieldToken,
             crate::printlanguage::SyntaxHighlight::no_color,
-            0,
+            None,
             field.ident,
             op_key(op),
         ));
@@ -9825,7 +9828,7 @@ impl PrintC {
                     Ok(Some((idx, newoff))) => {
                         if let Some(f) = cur.get_field(idx) {
                             off = newoff;
-                            stack.push(PartialEntry::Member(f.name.clone(), f.ident));
+                            stack.push(PartialEntry::Member(f.name.clone(), f.ident, std::rc::Rc::clone(&cur), f.offset));
                             ct = Some(std::rc::Rc::clone(&f.field_type));
                             succeeded = true;
                         }
@@ -9885,7 +9888,7 @@ impl PrintC {
                             // !succeeded artificial-field fallthrough below.
                         } else {
                             off = newoff;
-                            stack.push(PartialEntry::Member(fname, fident));
+                            stack.push(PartialEntry::Member(fname, fident, std::rc::Rc::clone(&cur), foff));
                             ct = Some(ftype);
                             succeeded = true;
                         }
@@ -10060,7 +10063,7 @@ impl PrintC {
         // SUBSCRIPT then OBJECT_MEMBER, yielding `(v1.arr)[i]` not `(v1[i]).arr`.
         for entry in stack.iter().rev() {
             match entry {
-                PartialEntry::Member(_, _) | PartialEntry::Unnamed(_, _) => {
+                PartialEntry::Member(..) | PartialEntry::Unnamed(_, _) => {
                     // C++ both the field and the artificial-name entry use
                     // `entry.token = &object_member` (printc.cc:2049 / 2109).
                     self.push_op(&tokens::OBJECT_MEMBER, Some(op_key(op)));
@@ -10084,12 +10087,12 @@ impl PrintC {
         // (`push_integer(entry.offset,...)`, printc.cc:2133).
         for entry in stack {
             match entry {
-                PartialEntry::Member(fname, fident) => {
+                PartialEntry::Member(fname, fident, parent, foff) => {
                     self.push_atom(&Atom::field(
                         fname.clone(),
                         TagType::FieldToken,
                         crate::printlanguage::SyntaxHighlight::no_color,
-                        0,
+                        Some((std::rc::Rc::clone(parent), *foff)),
                         *fident,
                         op_key(op),
                     ));
@@ -11296,7 +11299,7 @@ impl PrintC {
                 }
             }
             let suboff_bytes = AddrSpace::address_to_byte_int(suboff, word_size);
-            let (fieldname, fieldtype, fieldid) =
+            let (fieldname, fieldtype, fieldid, fieldoff) =
                 if metameta == crate::dtype::type_metatype::TYPE_UNION {
                     // TYPE_UNION arm (printc.cc:1000-1014).  A non-zero offset is the
                     // C++ "PTRSUB accesses union with non-zero offset" throw.
@@ -11324,7 +11327,7 @@ impl PrintC {
                     };
                     // fld = ((TypeUnion*)ct)->getField(resUnion->getFieldNum());
                     match ct.get_field(field_num) {
-                        Some(f) => (f.name.clone(), Some(f.field_type.clone()), f.ident),
+                        Some(f) => (f.name.clone(), Some(f.field_type.clone()), f.ident, Some(f.offset)),
                         None => {
                             self.op_func_ir(fd, arch, op);
                             return;
@@ -11338,7 +11341,7 @@ impl PrintC {
                         Some((idx, _newoff)) => {
                             let f = ct.get_field(idx);
                             match f {
-                                Some(f) => (f.name.clone(), Some(f.field_type.clone()), f.ident),
+                                Some(f) => (f.name.clone(), Some(f.field_type.clone()), f.ident, Some(f.offset)),
                                 None => return,
                             }
                         }
@@ -11348,7 +11351,7 @@ impl PrintC {
                                 return;
                             }
                             // Default field name `field_0x<hex>`.
-                            (format!("field_0x{suboff_bytes:x}"), None, suboff_bytes as int4)
+                            (format!("field_0x{suboff_bytes:x}"), None, suboff_bytes as int4, None)
                         }
                     }
                 };
@@ -11364,9 +11367,7 @@ impl PrintC {
                 fieldname,
                 TagType::FieldToken,
                 crate::printlanguage::SyntaxHighlight::no_color,
-                // The Atom's ct marker is markup-only (the no-markup emitter
-                // ignores it); the field name/offset carry the rendering.
-                0,
+                fieldoff.map(|o| (std::rc::Rc::clone(&ct), o)),
                 fieldid,
                 op_key(op),
             );

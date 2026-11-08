@@ -286,7 +286,7 @@ impl NodePending {
 /// `Atom::ptr_second`, printlanguage.hh:216-221).  Carried as a Rust enum (a
 /// tagged union) so the right variant is statically tracked.  The pointer
 /// members are opaque indices (STUB(printc)); `IntValue` is a real `uintb`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum AtomData {
     /// No associated data-flow annotation.
     None,
@@ -296,6 +296,9 @@ pub enum AtomData {
     Fd(usize),
     /// A type associated with the token (C++ `ct`).
     Ct(usize),
+    /// (kuna) A field token's containing structure or union and the field's
+    /// byte offset within it.
+    Field(std::rc::Rc<crate::dtype::Datatype>, int4),
     /// An integer value associated with a `casetoken` (C++ `intValue`).
     IntValue(uintb),
 }
@@ -338,12 +341,13 @@ impl Atom {
     }
 
     /// Construct a token for a field name (C++ `Atom(nm,t,hl,c,off,o)`,
-    /// printlanguage.hh:233-234).
+    /// printlanguage.hh:233-234).  `parent` is the containing structure or
+    /// union and the field's byte offset in it, when the field is a real one.
     pub fn field(
         name: impl Into<String>,
         tag: TagType,
         hl: SyntaxHighlight,
-        ct: usize,
+        parent: Option<(std::rc::Rc<crate::dtype::Datatype>, int4)>,
         off: int4,
         op: IrKey,
     ) -> Atom {
@@ -352,7 +356,7 @@ impl Atom {
             tag,
             highlight: hl,
             op: Some(op),
-            data: AtomData::Ct(ct),
+            data: parent.map_or(AtomData::Ct(0), |(ct, at)| AtomData::Field(ct, at)),
             offset: off,
         }
     }

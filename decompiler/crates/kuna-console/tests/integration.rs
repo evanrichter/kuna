@@ -20,6 +20,9 @@ mod n32_stack;
 #[path = "setup_commands.rs"]
 mod setup_commands;
 
+#[path = "verify_fieldtokens.rs"]
+mod verify_fieldtokens;
+
 #[path = "verify_aarch64_plt.rs"]
 mod verify_aarch64_plt;
 
