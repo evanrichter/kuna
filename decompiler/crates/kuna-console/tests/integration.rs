@@ -156,6 +156,9 @@ mod verify_declaredlibcproto;
 #[path = "verify_decode_engine.rs"]
 mod verify_decode_engine;
 
+#[path = "verify_decoded_instructions.rs"]
+mod verify_decoded_instructions;
+
 #[path = "verify_decompile_all.rs"]
 mod verify_decompile_all;
 

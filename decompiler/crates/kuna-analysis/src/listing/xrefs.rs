@@ -162,6 +162,9 @@ pub struct XrefIndex {
     scoped_callers: BTreeMap<(u64, u64), BTreeSet<u64>>,
     /// Every instruction VMA the walk decoded (membership only).
     decoded: HashSet<u64>,
+    /// The members of [`XrefIndex::decoded`] with their byte lengths, in address
+    /// order ([`XrefIndex::decoded_instructions`]).
+    lengths: Vec<(u64, u32)>,
     /// Every function entry the walk seeded or discovered, in address order.
     funcs: BTreeSet<u64>,
     /// Reachable instruction owners when ARM frame recovery adds gap entries.
@@ -503,6 +506,13 @@ impl XrefIndex {
     /// How many distinct instructions the walk decoded.
     pub fn instruction_count(&self) -> usize {
         self.insns
+    }
+
+    /// Every instruction the walk decoded, as `(vma, length in bytes)`, in
+    /// address order: exactly the addresses [`Self::is_decoded`] accepts. Two
+    /// may overlap when the walk decoded the same bytes from different starts.
+    pub fn decoded_instructions(&self) -> impl Iterator<Item = (u64, u32)> + '_ {
+        self.lengths.iter().copied()
     }
 
     /// How many instructions each of `entries` reaches by its own descent:
@@ -1254,7 +1264,7 @@ fn descend(
             if let Some(modes) = &mut frame_modes {
                 modes.record(entry, vma, len, mode);
             }
-            st.decoded.insert(vma);
+            st.record_decoded(vma, len);
             if gapwalk || prologues {
                 partition.push((vma, len));
             }
@@ -1814,6 +1824,11 @@ struct State {
     /// Membership only (the `VisitStat` dedup), so it is hashed rather than
     /// ordered: it is probed once per successor edge over the whole program.
     decoded: HashSet<u64>,
+    /// Every instruction decoded with its length, in decode order. Prefix
+    /// reuse can discard an instruction and the walk decode it again, so
+    /// [`State::finish`] keeps the last entry for each address still in
+    /// [`State::decoded`].
+    lengths: Vec<(u64, u32)>,
     funcs: BTreeSet<u64>,
     /// VMAs of the decoded `CALLIND` instructions; kept, and folded onto their
     /// containing function, in [`State::finish`].
@@ -1839,6 +1854,7 @@ impl State {
             by_target: BTreeMap::new(),
             by_source: BTreeMap::new(),
             decoded: HashSet::new(),
+            lengths: Vec::new(),
             funcs: seeds.clone(),
             indirect_call_sites: BTreeSet::new(),
             flow: keep_flow.then(|| FlowGraph {
@@ -1850,6 +1866,12 @@ impl State {
             carry: kuna_regcarry::Tracker::default(),
             skips: Vec::new(),
         }
+    }
+
+    /// Note that the walk decoded the `len`-byte instruction at `vma`.
+    fn record_decoded(&mut self, vma: u64, len: u32) {
+        self.decoded.insert(vma);
+        self.lengths.push((vma, len));
     }
 
     /// (kuna) `switchtable`: record the computed jump at `vma` in `function` as a
@@ -1939,6 +1961,17 @@ impl State {
             sort_dedup(refs, /* by_source = */ false);
         }
         let insns = self.decoded.len();
+        let mut lengths = self.lengths;
+        lengths.retain(|(vma, _)| self.decoded.contains(vma));
+        // Stable, so the last decode of an address stays last among its equals.
+        lengths.sort_by_key(|&(vma, _)| vma);
+        lengths.dedup_by(|later, kept| {
+            let same = later.0 == kept.0;
+            if same {
+                *kept = *later;
+            }
+            same
+        });
         let mut veneers_of_slot: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
         for (&entry, v) in &veneers {
             veneers_of_slot.entry(v.slot).or_default().push(entry);
@@ -1949,6 +1982,7 @@ impl State {
             by_source_function,
             scoped_callers: BTreeMap::new(),
             decoded: self.decoded,
+            lengths,
             funcs: self.funcs,
             body_owners,
             indirect_callers,
@@ -2021,6 +2055,7 @@ fn empty() -> XrefIndex {
         by_source_function: BTreeMap::new(),
         scoped_callers: BTreeMap::new(),
         decoded: HashSet::new(),
+        lengths: Vec::new(),
         funcs: BTreeSet::new(),
         body_owners: None,
         indirect_callers: BTreeSet::new(),
@@ -2914,6 +2949,7 @@ mod tests {
             by_target: BTreeMap::new(),
             by_source: BTreeMap::new(),
             decoded: HashSet::from([0x1030, 0x1102, 0x1200]),
+            lengths: Vec::new(),
             funcs: BTreeSet::from([0x1000, 0x1030, 0x1180]),
             indirect_call_sites: BTreeSet::new(),
             flow: None,
@@ -2974,6 +3010,7 @@ mod tests {
             by_target: BTreeMap::new(),
             by_source: BTreeMap::new(),
             decoded: HashSet::from([0x1188]),
+            lengths: Vec::new(),
             funcs: BTreeSet::from([0x1000, 0x1030, 0x1180]),
             indirect_call_sites: BTreeSet::from([0x1188]),
             flow: None,
@@ -3008,6 +3045,7 @@ mod tests {
             by_target: BTreeMap::new(),
             by_source: BTreeMap::new(),
             decoded: insns.iter().map(|&(vma, _, _)| vma).collect(),
+            lengths: Vec::new(),
             funcs: BTreeSet::from([0x1000, 0x2000, 0x3000]),
             indirect_call_sites: BTreeSet::new(),
             flow: Some(FlowGraph {
@@ -3030,6 +3068,47 @@ mod tests {
 
         let unmeasured = import_index();
         assert_eq!(unmeasured.function_instruction_counts(&[0x1000], usize::MAX), [0]);
+    }
+
+    /// Prefix reuse discards a replaced root's body and the walk decodes the
+    /// extended caller again: the listing follows `decoded`, dropping what was
+    /// discarded and keeping the length of the last decode.
+    #[test]
+    fn decoded_instructions_follow_a_prefix_reuse_discard() {
+        let mut st = State::new(&BTreeSet::from([0x1000, 0x2000]), false);
+        let mut modes = crate::listing::kuna_framemode::FrameModes::new(&[0x1000]);
+        let mut partition = Vec::new();
+        for (root, vma, len, mode) in [
+            (0x1000, 0x1000, 4, 0),
+            (0x1000, 0x1004, 4, 0),
+            (0x1000, 0x1008, 4, 0),
+            (0x2000, 0x2000, 2, 1),
+        ] {
+            st.record_decoded(vma, len);
+            modes.record(root, vma, len, Some(mode));
+            partition.push((vma, len));
+        }
+        let replacements = BTreeMap::from([(0x1000, 0x0ff8)]);
+        kuna_prefixreuse::discard_bodies(
+            &mut st,
+            &mut partition,
+            &mut BTreeMap::new(),
+            &mut None,
+            &modes,
+            &replacements,
+        );
+        assert!(!st.decoded.contains(&0x1004), "the replaced body is discarded");
+        // The rewalk from the extended caller reaches 0x1000 and 0x1004 again,
+        // here with 0x1004 read as a 2-byte instruction, and stops there.
+        for (vma, len) in [(0x0ff8, 4), (0x0ffc, 4), (0x1000, 4), (0x1004, 2)] {
+            st.record_decoded(vma, len);
+        }
+        let index = st.finish(BTreeMap::new(), false);
+        let listed: Vec<(u64, u32)> = index.decoded_instructions().collect();
+        assert_eq!(listed, [(0x0ff8, 4), (0x0ffc, 4), (0x1000, 4), (0x1004, 2), (0x2000, 2)]);
+        assert_eq!(listed.len(), index.instruction_count());
+        assert!(listed.iter().all(|&(vma, _)| index.is_decoded(vma)));
+        assert!(!index.is_decoded(0x1008));
     }
 
     /// Off an alias class, unifying is exactly `refs_to`.
