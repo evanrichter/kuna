@@ -681,21 +681,7 @@ pub fn decompile_pulled(
         // passed; only sites this function's flow actually visits are applied. Empty
         // unless the Listing + `noreturn_error` are on (so `kuna functions`/console are
         // unaffected).
-        let flow_ovr: Vec<(kuna_base::address::Address, kuna_base::types::uint4)> =
-            match entry.get_space() {
-                Some(space) if !prog.arch().error_noreturn_callsites.is_empty() => prog
-                    .arch()
-                    .error_noreturn_callsites
-                    .iter()
-                    .map(|&off| {
-                        (
-                            kuna_base::address::Address::new(std::rc::Rc::clone(space), off),
-                            kuna_decomp::overrides::flow_type::CALL_RETURN,
-                        )
-                    })
-                    .collect(),
-                _ => Vec::new(),
-            };
+        let flow_ovr = prog.noreturn_flow_overrides(&entry);
         // (kuna, DIV-66) The SHARED per-function decompile step — the same one
         // `IfcDecompile` runs. Before it existed this loop called the drive
         // directly and so skipped Ghidra's `FormatStringAnalyzer` half-B loop (and

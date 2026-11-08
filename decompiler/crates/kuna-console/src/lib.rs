@@ -38,6 +38,7 @@ pub mod kuna_callwide;
 pub mod kuna_declaredbytes;
 pub mod kuna_lazyfuncs;
 mod kuna_paramasserts;
+pub mod kuna_inputtypes;
 mod kuna_dwarfstack;
 pub mod kuna_buildstamp;
 pub mod consolemain;
