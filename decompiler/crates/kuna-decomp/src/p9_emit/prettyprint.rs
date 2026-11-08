@@ -229,6 +229,10 @@ pub struct MarkupRef {
     pub type_id: Option<uintb>,
     /// `ct->getName()` for an associated `Datatype` (C++ `ATTRIB_NAME`).
     pub type_name: Option<String>,
+    /// (kuna) A field token's containing structure or union name and the
+    /// field's byte offset.  Captured into [`EmitToken::field`]; the packed
+    /// encoding does not write it.
+    pub field: Option<(String, int4)>,
 }
 
 /// One source-line association captured while [`EmitMarkup`] serializes a
@@ -347,6 +351,10 @@ pub struct EmitToken {
     /// Where a comment came from; set on comment tokens and on syntax that
     /// stands in for a comment ([`Emit::print_comment`]).
     pub comment: Option<CommentKind>,
+    /// A field token's containing structure or union name and the field's
+    /// byte offset within it; `None` for a bit field or a name with no
+    /// backing field.
+    pub field: Option<(String, int4)>,
 }
 
 /// The column model of [`EmitNoMarkup`] replayed beside [`EmitMarkup`]: a line
@@ -418,6 +426,9 @@ impl TokenCapture {
                     occurrence,
                     seqnum: None,
                     comment,
+                    field: markup
+                        .filter(|_| kind == TokenKind::Field)
+                        .and_then(|m| m.field.clone()),
                 });
             }
             self.col += seg.encode_utf16().count();
@@ -2084,6 +2095,7 @@ impl TokenSplit {
         self.hl = h;
         self.markup.type_id = markup.type_id;
         self.markup.type_name = markup.type_name.clone();
+        self.markup.field = markup.field.clone();
         self.off = o as uintb;
         self.markup.opref = markup.opref;
     }
@@ -2096,6 +2108,7 @@ impl TokenSplit {
         self.hl = h;
         self.markup.type_id = markup.type_id;
         self.markup.type_name = markup.type_name.clone();
+        self.markup.field = markup.field.clone();
         self.off = id as uintb;
         self.markup.opref = markup.opref;
     }

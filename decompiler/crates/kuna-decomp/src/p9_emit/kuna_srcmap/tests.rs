@@ -20,6 +20,7 @@ fn raw(line: usize, col: usize, text: &str, kind: TokenKind) -> EmitToken {
         occurrence: 0,
         seqnum: None,
         comment: None,
+        field: None,
     }
 }
 
