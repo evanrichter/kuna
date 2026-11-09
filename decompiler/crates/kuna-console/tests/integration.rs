@@ -534,3 +534,6 @@ mod verify_rustfmtio;
 
 #[path = "verify_rustprobestack.rs"]
 mod verify_rustprobestack;
+
+#[path = "verify_operandpieces.rs"]
+mod verify_operandpieces;

@@ -24,6 +24,8 @@ use kuna_num::float::FloatFormat;
 use kuna_num::opcodes::{OpCode, OpcodeDecoder};
 use kuna_num::pcoderaw::{PcodeOpRaw, VarnodeData};
 
+use crate::kuna_operandpieces::StructuredAssembly;
+
 // Names from translate.hh whose port lives in kuna-base (see module docs);
 // re-exported so the C++ header maps onto this module.
 pub use kuna_base::space::{
@@ -574,6 +576,15 @@ pub trait Translate: RegisterLookup {
             body.clear();
         }
         result
+    }
+
+    /// (kuna) Disassemble one instruction with typed operand pieces whose
+    /// mnemonic and body match [`Self::print_assembly_into`]. Translators that
+    /// print text only return the body as one text piece.
+    fn print_assembly_structured(&self, baseaddr: &Address) -> KunaResult<StructuredAssembly> {
+        let (mut mnemonic, mut body) = (String::new(), String::new());
+        let length = self.print_assembly_into(baseaddr, &mut mnemonic, &mut body)?;
+        Ok(StructuredAssembly::text_only(length, mnemonic, body))
     }
 
     // --- C++ non-virtual members, provided over translate_base() ---

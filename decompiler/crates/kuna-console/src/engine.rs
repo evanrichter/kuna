@@ -50,6 +50,7 @@ use kuna_decomp::xml_arch::XmlArchitectureCapability;
 use kuna_num::opcodes::OpCode;
 use kuna_num::pcoderaw::VarnodeData;
 
+use kuna_sleigh::kuna_operandpieces::StructuredAssembly;
 use kuna_sleigh::loadimage::{section_flags, LoadImage, LoadImageFunc, LoadImageSection};
 use kuna_analysis::loadimage_object::{is_arm32_language, ObjectLoadImage, PE_MACHINES};
 use kuna_analysis::loadimage_mz::{is_mz_dos_image, MzImage, MZ_LANGUAGE};
@@ -1873,6 +1874,21 @@ impl ConsoleProgram {
         );
         let addr = Address::new(code_space, vma);
         self.arch().translate().print_assembly_into(&addr, mnem, body)
+    }
+
+    /// (kuna) Disassemble the instruction at code-space VMA `vma` with typed
+    /// operand pieces: registers, constants and addresses (dereferenced fixed
+    /// locations, flow targets and PC-relative values resolved to their
+    /// target), each with its byte span in the body. Mnemonic, body and length
+    /// match [`Self::disassemble_at`].
+    pub fn disassemble_structured_at(&self, vma: u64) -> KunaResult<StructuredAssembly> {
+        let code_space = Rc::clone(
+            self.arch()
+                .manage()
+                .get_default_code_space()
+                .ok_or_else(|| KunaError::lowlevel("no default code space"))?,
+        );
+        self.arch().translate().print_assembly_structured(&Address::new(code_space, vma))
     }
 
     /// Lift exactly one instruction, before decompiler passes or SSA construction.
