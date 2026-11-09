@@ -2199,6 +2199,17 @@ impl PrintC {
         MarkupRef::op(fd.obank().get(op).map(|o| o.get_time() as uintb))
     }
 
+    /// (kuna) The markup of a control-flow keyword: the last op of the structured
+    /// block `blk` holding the branch it prints, as C++ `emitBlockIf`,
+    /// `emitBlockWhileDo`, `emitForLoop` and `emitBlockDoWhile` tag theirs with
+    /// `condBlock->lastOp()`.  `none()` when the block has no last op.
+    fn branch_markup(&self, fd: &Funcdata, blk: BlockId) -> MarkupRef {
+        match fd.fd_sblock_last_op(blk) {
+            Some(op) => self.op_markup(fd, op),
+            None => MarkupRef::none(),
+        }
+    }
+
     /// C++ `PrintLanguage::emitOp` (printlanguage.cc:332) — resolve final
     /// spacing / parens for one RPN entry at its current stage.  Mutates the
     /// entry's `id2` for surround tokens (mirrored back by the callers).
@@ -4806,7 +4817,8 @@ impl PrintC {
         );
 
         // ... then `if ` + the branch condition (only_branch).
-        self.emit.tag_op(self.lang().kw_if, SyntaxHighlight::KeywordColor, &MarkupRef::none());
+        let markup = self.branch_markup(fd, cond_block);
+        self.emit.tag_op(self.lang().kw_if, SyntaxHighlight::KeywordColor, &markup);
         self.emit.spaces(1, 0);
         self.context.push_mod();
         self.context.set_mod(modifiers::ONLY_BRANCH);
@@ -5548,7 +5560,8 @@ impl PrintC {
         let cond_block = fd.sblocks_ref().block(blk).get_block(0);
         self.emit_comment_block_tree(fd, cond_block);
         self.emit.tag_line();
-        self.emit.tag_op(self.lang().kw_for, SyntaxHighlight::KeywordColor, &MarkupRef::none());
+        let markup = self.branch_markup(fd, cond_block);
+        self.emit.tag_op(self.lang().kw_for, SyntaxHighlight::KeywordColor, &markup);
         self.emit.spaces(1, 0);
         let id1 = self.emit.open_paren(crate::printlanguage::OPEN_PAREN, 0);
         self.context.push_mod();
@@ -5628,7 +5641,8 @@ impl PrintC {
             self.emit_block(fd, arch, cond_block);
             self.context.pop_mod();
             self.emit.tag_line();
-            self.emit.tag_op(self.lang().kw_if, SyntaxHighlight::KeywordColor, &MarkupRef::none());
+            let markup = self.branch_markup(fd, cond_block);
+            self.emit.tag_op(self.lang().kw_if, SyntaxHighlight::KeywordColor, &markup);
             self.emit.spaces(1, 0);
             self.context.push_mod();
             self.context.set_mod(modifiers::ONLY_BRANCH);
@@ -5640,7 +5654,8 @@ impl PrintC {
             // Renders: while(condition) { ... }
             self.emit_comment_block_tree(fd, cond_block);
             self.emit.tag_line();
-            self.emit.tag_op(self.lang().kw_while, SyntaxHighlight::KeywordColor, &MarkupRef::none());
+            let markup = self.branch_markup(fd, cond_block);
+            self.emit.tag_op(self.lang().kw_while, SyntaxHighlight::KeywordColor, &markup);
             self.emit.spaces(1, 0);
             let id1 = self.emit.open_paren(crate::printlanguage::OPEN_PAREN, 0);
             self.context.push_mod();
@@ -5692,7 +5707,8 @@ impl PrintC {
         self.context.pop_mod();
         self.emit.close_brace_indent(self.lang().kw_close_curly, id);
         self.emit.spaces(1, 0);
-        self.emit.tag_op(self.lang().kw_while, SyntaxHighlight::KeywordColor, &MarkupRef::none());
+        let markup = self.branch_markup(fd, body);
+        self.emit.tag_op(self.lang().kw_while, SyntaxHighlight::KeywordColor, &markup);
         self.emit.spaces(1, 0);
         self.context.set_mod(modifiers::ONLY_BRANCH);
         self.emit_block(fd, arch, body);
@@ -11839,9 +11855,11 @@ impl PrintC {
         size_suffix: &str,
     ) {
         let tok = self.integer_token(val, sz, display_fmt_in, sign, force_unsigned, force_sized, size_suffix);
+        // (kuna) A literal, not plain syntax, so its markup names the op that reads
+        // it, as C++ `push_integer` tags it (`Atom(t,tag,const_color,op,vn)`).
         self.push_atom(&Atom::with_op(
             tok,
-            TagType::Syntax,
+            TagType::LiteralToken,
             crate::printlanguage::SyntaxHighlight::const_color,
             op_key(op),
         ));
@@ -12100,9 +12118,10 @@ impl PrintC {
                 }
             }
         };
+        // (kuna) A literal, as for integers: its markup names the op reading it.
         self.push_atom(&Atom::with_op(
             tok,
-            TagType::Syntax,
+            TagType::LiteralToken,
             crate::printlanguage::SyntaxHighlight::const_color,
             op_key(op),
         ));
