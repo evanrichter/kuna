@@ -537,3 +537,6 @@ mod verify_rustprobestack;
 
 #[path = "verify_operandpieces.rs"]
 mod verify_operandpieces;
+
+#[path = "verify_wrapmain.rs"]
+mod verify_wrapmain;

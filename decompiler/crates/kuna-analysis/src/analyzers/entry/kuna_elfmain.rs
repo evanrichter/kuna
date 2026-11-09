@@ -91,7 +91,8 @@
 //! This pass therefore consults it as a second source **for the prototype only**
 //! — the entry and the name stay that pass's own, so `--option armlibcmain off`
 //! still restores the previous inventory exactly and the by-name park simply
-//! finds no `main` to land on.
+//! finds no `main` to land on. [`super::kuna_wrapmain`] is a third source on
+//! the same terms, for the glibc 2.34+ `__wrap_main` crt1.
 //!
 //! ## What it refuses
 //!
@@ -192,7 +193,9 @@ impl AnalysisPass for ElfMainPass {
             // installs takes it by that name, so the entry stays that pass's.
             match source {
                 Source::Symbol => out.main_decl_at.push((vma, pieces)),
-                Source::Decoded | Source::ArmLibcMain => out.prototypes.push(pieces),
+                Source::Decoded | Source::ArmLibcMain | Source::WrapMain => {
+                    out.prototypes.push(pieces)
+                }
             }
         }
         out
@@ -206,6 +209,8 @@ enum Source {
     Decoded,
     /// [`super::kuna_armlibcmain`], which names it.
     ArmLibcMain,
+    /// [`super::kuna_wrapmain`], which names it.
+    WrapMain,
     /// The image's own symbol `main`.
     Symbol,
 }
@@ -229,7 +234,14 @@ fn main_claim(file: &object::File, bytes: &[u8]) -> Option<(u64, Source)> {
         // That pass emits the entry and the name; only the prototype is added
         // here, and it is inert unless `armlibcmain` is on to install the `main`
         // it parks on.
-        None => super::kuna_armlibcmain::main_vma(file, bytes).map(|vma| (vma, Source::ArmLibcMain)),
+        None => super::kuna_armlibcmain::main_vma(file, bytes)
+            .map(|vma| (vma, Source::ArmLibcMain))
+            .or_else(|| {
+                matches!(main_symbol, MainSymbol::Absent)
+                    .then(|| super::kuna_wrapmain::main_vma(file))
+                    .flatten()
+                    .map(|vma| (vma, Source::WrapMain))
+            }),
     };
     let (vma, source) = match main_symbol {
         MainSymbol::Ambiguous => return None,
@@ -457,12 +469,15 @@ mod tests {
         assert_eq!(claim("elfmainextra_x86_64"), Some((0x1026, Source::Decoded)));
     }
 
-    /// The non-PIE ARM32 shape oracle 4 cannot see: `armlibcmain` owns the entry
-    /// and the name, so only the prototype is contributed here.
+    /// The ARM and AArch64 shapes oracle 4 cannot see: `armlibcmain` or
+    /// `wrapmain` owns the entry and the name, so only the prototype is
+    /// contributed here.
     #[test]
     fn contributes_only_the_prototype_on_the_non_pie_arm_shape() {
         assert_eq!(claim("armlibcmain_le32"), Some((0x103dc, Source::ArmLibcMain)));
         assert_eq!(claim("armlibcmain_got_le32"), Some((0x10518, Source::ArmLibcMain)));
+        assert_eq!(claim("wrapmain_interwork_le32"), Some((0x10428, Source::WrapMain)));
+        assert_eq!(claim("wrapmain_aarch64"), Some((0x4007bc, Source::WrapMain)));
     }
 
     /// An un-stripped image names `main` itself, and that name stays: the pass

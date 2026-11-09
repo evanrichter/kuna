@@ -38,13 +38,13 @@ fn surface_count_is_121() {
 }
 
 #[test]
-fn settable_count_is_378() {
-    assert_eq!(kuna_num_settables(), 378);
-    assert_eq!(SETTABLE_TABLE.len(), 378);
+fn settable_count_is_379() {
+    assert_eq!(kuna_num_settables(), 379);
+    assert_eq!(SETTABLE_TABLE.len(), 379);
 }
 
 #[test]
-fn tier_counts_are_131_core_153_transform_94_analysis() {
+fn tier_counts_are_131_core_153_transform_95_analysis() {
     let mut core = 0;
     let mut transform = 0;
     let mut analysis = 0;
@@ -56,7 +56,7 @@ fn tier_counts_are_131_core_153_transform_94_analysis() {
             other => panic!("invalid tier {other:?} on {}", s.option),
         }
     }
-    assert_eq!((core, transform, analysis), (131, 153, 94));
+    assert_eq!((core, transform, analysis), (131, 153, 95));
 }
 
 #[test]
@@ -423,6 +423,9 @@ fn option_values_live_value_present_for_179() {
         // of `machomain` above and the same seam: an analysis-tier gate with no
         // codegen live reader, read console-side via kuna_live_value. Default-ON.
         "armlibcmain",
+        // (kuna) glibc 2.34+ `__wrap_main` recovery -- the same seam as
+        // `armlibcmain` above. Default-off.
+        "wrapmain",
         // (kuna) ELF libc-start `main` naming + prototype -- the ELF counterpart of
         // `machomain` above and the same seam: an analysis-tier gate with no
         // codegen live reader, read console-side via kuna_live_value. Default-ON.
@@ -1170,7 +1173,8 @@ fn emit_catalog_json_static_form_brackets_and_commas() {
     // +1 for `switchrunon`; its P2 row sits after `switchsharedcase`.
     // +1 for `bejoinpass`; its P4 row sits after `bejoin`.
     // +1 for `persistcalls`; its P3 row sits after `readonlycalls`.
-    assert_eq!(json.matches("},\n").count(), 377);
+    // +1 for `wrapmain`; its P1 row sits after `armlibcmain`.
+    assert_eq!(json.matches("},\n").count(), 378);
 }
 
 #[test]

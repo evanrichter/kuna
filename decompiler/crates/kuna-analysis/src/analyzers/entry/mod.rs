@@ -90,6 +90,7 @@ use crate::loader::format::FormatKind;
 
 pub mod kuna_entrymainproto;
 pub mod kuna_armlibcmain;
+pub mod kuna_wrapmain;
 pub mod kuna_elfmain;
 pub mod kuna_machomain;
 pub mod kuna_pemain;

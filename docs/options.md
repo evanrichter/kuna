@@ -665,6 +665,9 @@ Three tiers:
 | a prompt an ARM binary plainly prints has no owning function | [`armlibcmain`](#armlibcmain) |
 | kuna xrefs --to a .rodata address finds nothing in a non-PIE ARM executable | [`armlibcmain`](#armlibcmain) |
 | most of a stripped ARM binary's .text is never decoded although it is inside a discovered function's extent | [`armlibcmain`](#armlibcmain) |
+| kuna functions on a stripped arm or aarch64 binary lists no main | [`wrapmain`](#wrapmain) |
+| a stripped mixed arm/thumb binary lists none of its own functions past _start | [`wrapmain`](#wrapmain) |
+| main is listed only as sub_<addr> on a stripped aarch64 binary | [`wrapmain`](#wrapmain) |
 | an unstripped ELF's main decompiles with anonymous a0/a1 parameters and an unsigned return | [`elfmain`](#elfmain) |
 | argv[1] in main reads as a struct field or a cast of a1 | [`elfmain`](#elfmain) |
 | kuna functions on a stripped Linux binary lists no main at all | [`elfmain`](#elfmain) |
@@ -2884,6 +2887,14 @@ Program-prep enablement: what is discovered, decoded, and named before any funct
 - **When to flip:** On by default (DIV-132). Makes a stripped non-PIE ARM32 binary report `main` and, through it, the body that reaches most of the program: the tell-tale is `kuna strings` giving every literal `xrefs_count 0` and `functions []` on an ARM image whose disassembly plainly shows `ldr r0,[<pool>]` a few instructions before a `printf` call, together with a `kuna functions` inventory whose largest entry is an `_INIT_<i>` or `_start` covering most of .text. Flip off to restore that inventory exactly - e.g. on an image whose entry point is a hand-rolled loader that calls `__libc_start_main` with something other than a C `main`, where the name would be misleading.
 - **Where / provenance:** P1/code-data-partition · kuna · correctness-fix · kuna-analysis-armlibcmain
 - **Example:** `--option armlibcmain off`
+
+### `wrapmain` -- on | off, default `off`
+
+- **Symptoms:** kuna functions on a stripped arm or aarch64 binary lists no main; a stripped mixed arm/thumb binary lists none of its own functions past _start; main is listed only as sub_<addr> on a stripped aarch64 binary.
+- **What it does:** Recover `main` from a glibc 2.34+ crt1 `_start` on 32-bit ARM and AArch64, which hands `__libc_start_main` the `__wrap_main` trampoline rather than `main` and computes its address from the PC. On A32 the shape is `ldr r0,[pc,#imm] ; add rX,pc,#imm ; add r0,rX,r0`, whose pool word is an offset that `armlibcmain` reads as an absolute address and refuses; on AArch64 it is `adrp x0 ; add x0,x0,#lo12`, which oracle 4 does not read because it only follows the PIE `adrp ; ldr` GOT load. A stripped image then names no `main`. On AArch64 the trampoline has no entry, so `_start`'s extent runs on into it and `main` appears only as an anonymous tail-call target. On ARM nothing reaches the trampoline at all, and when `main` is Thumb its `b` lands on a linker veneer (`ldr pc,[pc,#-4]` and a word holding `main|1`) that the Listing walk does not follow, so `main` and everything only it calls are never discovered. On, the pass decodes both shapes, anchored on the `bl` to the PLT stub named `__libc_start_main`, follows at most four direct branches and ARM long-branch veneers (`ldr pc,[pc,#-4]`, `ldr ip,[pc] ; bx ip`) to the routine they reach, lists each step as an entry and names the last `main`; `elfmain` then declares it. A trampoline that an `.eh_frame` FDE places inside `_start` (glibc's AArch64 crt1) stays there under `fdeinterior`. The trampoline is followed only when it lies in the `_start` window, where glibc puts it, so a `main` crt1 passes directly is never replaced by its first branch target. The steps and `main` seed the Listing walk, and `armwalkmode` starts a Thumb `main` in Thumb, so its `blx` calls carry the walk into its A32 callees. It refuses an image that is not an executable ARM or AArch64 ELF, a Thumb `_start`, an image with no `__libc_start_main` stub, a step outside every executable section, and a `main` that already carries a function symbol, so an unstripped image is unchanged.
+- **When to flip:** Off by default. Turn on for a stripped glibc 2.34+ ARM or AArch64 executable: the tell-tale is `kuna functions` listing no `main`, `main` listed only as `sub_<addr>` on AArch64, or, on a mixed ARM/Thumb image, none of the program's own functions past crt1 being listed at all.
+- **Where / provenance:** P1/code-data-partition · kuna · correctness-fix · kuna-analysis-wrapmain
+- **Example:** `--option wrapmain on`
 
 ### `elfmain` -- on | off, default `on`
 

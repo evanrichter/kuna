@@ -1089,6 +1089,9 @@ kuna_options! { self, p1;
     "armlibcmain" => {
         on_off!(analysis_armlibcmain, "non-PIE ARM crt1 _start->main recovery")
     },
+    "wrapmain" => {
+        on_off!(analysis_wrapmain, "glibc __wrap_main trampoline main recovery")
+    },
     "elfmain" => {
         on_off!(analysis_elfmain, "ELF libc-start main naming + prototype")
     },

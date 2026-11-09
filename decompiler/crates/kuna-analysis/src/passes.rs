@@ -167,6 +167,15 @@ pub fn passes_for(compiler: Compiler, format: object::BinaryFormat) -> Vec<Box<d
         // After EntryDiscoveryPass, whose commit consults the `entry_names`
         // overlay this pass writes.
         Box::new(crate::entry::kuna_armlibcmain::ArmLibcMainPass),
+        // (kuna `wrapmain`) S1 glibc 2.34+ `_start`->`__wrap_main`->`main`: the
+        // PC-relative A32 and `adrp ; add` AArch64 crt1 shapes neither oracle 4
+        // nor `armlibcmain` reads, followed through the trampoline and any ARM
+        // long-branch veneer to `main`. Registered always (it self-gates on an
+        // ARM/AArch64 ELF with a `__libc_start_main` stub whose `main` is
+        // unnamed), COMMIT gated by `--option wrapmain on|off` via
+        // `engine.rs::analysis_pass_enabled`. Before ElfMainPass, which parks the
+        // prototype on the name this pass installs.
+        Box::new(crate::entry::kuna_wrapmain::WrapMainPass),
         // (kuna `elfmain`) S1 ELF libc-start `main` naming + prototype: entry
         // oracle 4 already decodes the value crt1 hands `__libc_start_main`, but
         // address-only, so a stripped ELF reports its own starting point as one
@@ -740,6 +749,16 @@ pub fn run_listing_consumers_replaying(
     {
         let go = crate::pclntab::function_entries(&file);
         seeds.retain(|seed| go.binary_search(seed).is_err());
+    }
+    // (kuna `wrapmain`) The `__wrap_main` trampoline, its veneers and `main` are
+    // walk roots: nothing in crt1 calls them, so the walk would never reach the
+    // program otherwise.
+    if arch.analysis_wrapmain {
+        if let Some(found) = crate::entry::kuna_wrapmain::recover(&file) {
+            seeds.extend(found.entries().map(|(at, _)| at));
+            seeds.sort_unstable();
+            seeds.dedup();
+        }
     }
     let bracket_evidence = std::cell::OnceCell::new();
     let bracket = |exec: &[(u64, u64)]| arch.analysis_aifbracket.then(|| {

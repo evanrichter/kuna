@@ -2016,6 +2016,13 @@ pub struct Architecture {
     /// anchored on the `bl` to the PLT stub named `__libc_start_main`. Off
     /// restores the previous inventory exactly.
     pub analysis_armlibcmain: bool,
+    /// (kuna) Recover `main` through the glibc 2.34+ `__wrap_main` trampoline
+    /// that a non-PIE ARM or AArch64 crt1 hands `__libc_start_main`
+    /// (`wrapmain`); default **off**. Decodes the PC-relative `_start`, follows
+    /// the trampoline's branch and any ARM long-branch veneer to `main`, lists
+    /// each as an entry, names the last `main`, seeds the Listing walk with them
+    /// and starts a Thumb `main` in Thumb.
+    pub analysis_wrapmain: bool,
     /// (kuna) Name the ELF routine crt1 hands to `__libc_start_main` `main` and
     /// declare it `int main(int argc, char **argv, char **envp)` (`elfmain`);
     /// default **on**. Entry oracle 4 already decodes that address on x86-64,
@@ -3406,6 +3413,7 @@ impl Architecture {
             analysis_machomain: false,
             analysis_pemain: false,
             analysis_armlibcmain: false,
+            analysis_wrapmain: false,
             analysis_elfmain: false,
             analysis_strings: false,
             analysis_widestrings: false,
@@ -3891,6 +3899,8 @@ impl Architecture {
         self.analysis_pemain = true;
         // (kuna) non-PIE ARM crt1 `_start`->`main` recovery -- default-ON (DIV-132).
         self.analysis_armlibcmain = true;
+        // (kuna) glibc 2.34+ `__wrap_main` recovery -- default-OFF (output-changing).
+        self.analysis_wrapmain = false;
         // (kuna) ELF libc-start `main` naming + prototype -- default-ON.
         self.analysis_elfmain = true;
         // (kuna) `.eh_frame` LSDA landing-pad discovery — default-OFF (opt-in,

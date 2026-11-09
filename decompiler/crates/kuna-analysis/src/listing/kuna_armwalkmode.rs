@@ -8,7 +8,9 @@
 //! A32 function placed there decoded as Thumb even when an A32 `bl` called it.
 //!
 //! The walk starts carrying a mode at an even `e_entry` and at each even
-//! function symbol, which the ELF for the ARM architecture makes A32. From an
+//! function symbol, which the ELF for the ARM architecture makes A32, and, with
+//! `wrapmain` on, at the `main` crt1 hands `__libc_start_main` in the mode the
+//! pointer to it states. From an
 //! instruction decoded in a carried mode, a branch target and a fall-through
 //! keep the mode, and a direct call target takes the mode the call commits
 //! there (`blx imm` switches) or else keeps it (`bl`). Every other function
@@ -48,13 +50,14 @@ const TMODE: &[u8] = b"TMode";
 /// The most instructions one return search visits before it assumes a return.
 const RETURN_SEARCH_LIMIT: usize = 1 << 16;
 
-/// The `TMode` field of the language and the A32 roots, for an image the pass
+/// The `TMode` field of the language and the A32 and Thumb roots, for an image the pass
 /// applies to.
 pub(super) struct ArmWalkMode {
     word: usize,
     shift: u32,
     mask: u32,
     roots: BTreeSet<u64>,
+    thumb_roots: BTreeSet<u64>,
 }
 
 impl ArmWalkMode {
@@ -77,7 +80,7 @@ impl ArmWalkMode {
         {
             return None;
         }
-        let roots: BTreeSet<u64> = file
+        let mut roots: BTreeSet<u64> = file
             .symbols()
             .chain(file.dynamic_symbols())
             .filter(|sym| sym.kind() == SymbolKind::Text && sym.is_definition())
@@ -85,12 +88,25 @@ impl ArmWalkMode {
             .chain(std::iter::once(file.entry()))
             .filter(|&at| at != 0 && at & 1 == 0)
             .collect();
+        let mut thumb_roots = BTreeSet::new();
+        if arch.analysis_wrapmain {
+            if let Some(found) = crate::entry::kuna_wrapmain::recover(file) {
+                for (at, mode) in found.entries() {
+                    if mode == 1 {
+                        thumb_roots.insert(at);
+                    } else {
+                        roots.insert(at);
+                    }
+                }
+            }
+        }
         let range = arch.with_context_db_mut(|db| db.get_variable(TMODE)).ok()?;
         Some(ArmWalkMode {
             word: usize::try_from(range.get_word()).ok()?,
             shift: u32::try_from(range.get_shift()).ok()?,
             mask: range.get_mask(),
             roots,
+            thumb_roots,
         })
     }
 
@@ -128,8 +144,11 @@ pub(super) struct WalkModes<'a> {
 }
 
 impl WalkModes<'_> {
-    /// The carried mode of a function entry: A32 at a root, else its call's.
+    /// The carried mode of a function entry: its root's, else its call's.
     pub fn entry(&self, at: u64) -> Option<u32> {
+        if self.mode.thumb_roots.contains(&at) {
+            return Some(1);
+        }
         if self.mode.roots.contains(&at) {
             return Some(0);
         }
