@@ -27,6 +27,8 @@ mod verify_fieldtokens;
 mod verify_inputtypes;
 #[path = "verify_localstructs.rs"]
 mod verify_localstructs;
+#[path = "verify_memoryspecs.rs"]
+mod verify_memoryspecs;
 
 #[path = "verify_aarch64_plt.rs"]
 mod verify_aarch64_plt;
