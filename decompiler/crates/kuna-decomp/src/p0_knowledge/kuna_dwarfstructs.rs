@@ -38,13 +38,13 @@
 /// (the pre-fix named-opaque mapping).
 pub const DWARFSTRUCTS_ENV: &str = "KUNA_DWARFSTRUCTS";
 
-/// Whether DWARF aggregate-layout import is enabled for this process.
+/// Whether DWARF aggregate-layout import is enabled for the load in progress.
 /// Default **on**: only an explicit off-token in [`DWARFSTRUCTS_ENV`] disables it.
 pub fn dwarfstructs_enabled() -> bool {
-    crate::options::env_toggle(DWARFSTRUCTS_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.dwarfstructs).unwrap_or_else(crate::kuna_loadoptions::env::dwarfstructs)
 }
 
-/// Bridge a `set_kuna_option("dwarfstructs", val)` toggle to
+/// Export a `set_kuna_option("dwarfstructs", val)` toggle to
 /// [`DWARFSTRUCTS_ENV`] so a later `load file` in the *same* process sees the
 /// choice (the interactive `option dwarfstructs ...` before `load file` path;
 /// the CLI sets the env var on the subprocess directly).

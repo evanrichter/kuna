@@ -29,12 +29,12 @@
 /// off-tokens ⇒ **enabled**; `off`/`0`/`false` ⇒ disabled.
 pub const GOTYPES_ENV: &str = "KUNA_GOTYPES";
 
-/// Whether the Go runtime-type harvest is enabled for this process.
+/// Whether the Go runtime-type harvest is enabled for the load in progress.
 pub fn gotypes_enabled() -> bool {
-    crate::options::env_toggle(GOTYPES_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.gotypes).unwrap_or_else(crate::kuna_loadoptions::env::gotypes)
 }
 
-/// Bridge a `set_kuna_option("gotypes", val)` toggle to [`GOTYPES_ENV`] so a
+/// Export a `set_kuna_option("gotypes", val)` toggle to [`GOTYPES_ENV`] so a
 /// later `load file` in the same process sees the choice.
 pub fn set_gotypes_env(on: bool) {
     std::env::set_var(GOTYPES_ENV, if on { "on" } else { "off" });

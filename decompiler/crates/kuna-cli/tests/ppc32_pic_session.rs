@@ -1,5 +1,6 @@
-//! In-process PPC32 PIC sessions. The option writes the process environment the
-//! loader reads, so these tests run serially in their own binary.
+//! In-process PPC32 PIC sessions. A session carries a load-time option to its
+//! next load through the process environment, as the console does, so these
+//! tests run serially in their own binary.
 
 mod common;
 #[path = "fixtures/ppc32_import_fixture.rs"]
@@ -15,6 +16,13 @@ fn serial() -> MutexGuard<'static, ()> {
     let guard = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
     std::env::remove_var(ENV);
     guard
+}
+
+/// Set `ppc32picimports` on `prog` and carry it to the next load, as the
+/// console's `option` command does.
+fn set_mode(prog: &mut kuna_console::engine::ConsoleProgram, value: &str) {
+    prog.arch_mut().set_kuna_option("ppc32picimports", value).unwrap();
+    prog.arch().load_options().export_env("ppc32picimports");
 }
 
 fn load(path: &std::path::Path) -> kuna_console::engine::ConsoleProgram {
@@ -45,19 +53,20 @@ fn a_reloaded_image_reports_the_mode_its_loader_applied() {
     let mut prog = load(&path);
     assert_eq!(prog.arch().analysis_ppc32picimports, Mode::Off);
     assert!(!named(&prog));
-    prog.arch_mut().set_kuna_option("ppc32picimports", "abi").unwrap();
+    set_mode(&mut prog, "abi");
     let mut prog = load(&path);
     assert_eq!(prog.arch().analysis_ppc32picimports, Mode::Abi);
     assert!(named(&prog));
-    prog.arch_mut().set_kuna_option("ppc32picimports", "on").unwrap();
+    set_mode(&mut prog, "on");
     assert_eq!(prog.arch().analysis_ppc32picimports, Mode::On);
     let mut prog = load(&path);
     assert_eq!(prog.arch().analysis_ppc32picimports, Mode::Off);
     assert!(!named(&prog));
-    prog.arch_mut().set_kuna_option("ppc32picimports", "abi").unwrap();
+    set_mode(&mut prog, "abi");
     prog.arch_mut().reset_wire_defaults();
     assert_eq!(prog.arch().analysis_ppc32picimports, Mode::Off);
-    assert_eq!(Mode::from_env(), Mode::Off);
+    assert_eq!(prog.arch().load_options().ppc32picimports, Mode::Off);
+    prog.arch().load_options().export_env("ppc32picimports");
     assert!(!named(&load(&path)));
     std::fs::remove_file(path).unwrap();
 }

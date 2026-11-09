@@ -32,12 +32,12 @@
 /// means disabled.
 pub const REXTHUNK_ENV: &str = "KUNA_REXTHUNK";
 
-/// Whether the REX-prefixed thunk rejection is enabled for this process.
+/// Whether the REX-prefixed thunk rejection is enabled for the load in progress.
 pub fn rexthunk_enabled() -> bool {
-    crate::options::env_toggle(REXTHUNK_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.rexthunk).unwrap_or_else(crate::kuna_loadoptions::env::rexthunk)
 }
 
-/// Bridge a `set_kuna_option("rexthunk", val)` toggle to [`REXTHUNK_ENV`] so a
+/// Export a `set_kuna_option("rexthunk", val)` toggle to [`REXTHUNK_ENV`] so a
 /// later `load file` in the same process sees the choice.
 pub fn set_rexthunk_env(on: bool) {
     std::env::set_var(REXTHUNK_ENV, if on { "on" } else { "off" });

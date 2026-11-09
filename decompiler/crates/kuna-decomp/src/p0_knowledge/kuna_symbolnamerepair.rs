@@ -53,11 +53,11 @@
 /// disabled (the historical hard error).
 pub const SYMBOLNAMEREPAIR_ENV: &str = "KUNA_SYMBOLNAMEREPAIR";
 
-/// Whether degenerate-symbol-name repair is enabled for this process.
+/// Whether degenerate-symbol-name repair is enabled for the load in progress.
 /// Default **on**: only an explicit off-token in [`SYMBOLNAMEREPAIR_ENV`]
 /// disables it.
 pub fn symbolnamerepair_enabled() -> bool {
-    crate::options::env_toggle(SYMBOLNAMEREPAIR_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.symbolnamerepair).unwrap_or_else(crate::kuna_loadoptions::env::symbolnamerepair)
 }
 
 /// Whether `component` — one `::`-delimited piece of a qualified symbol name —
@@ -80,7 +80,7 @@ pub fn skip_scope_component(component: &str) -> bool {
     component.is_empty() && symbolnamerepair_enabled()
 }
 
-/// Bridge a `set_kuna_option("symbolnamerepair", val)` toggle to
+/// Export a `set_kuna_option("symbolnamerepair", val)` toggle to
 /// [`SYMBOLNAMEREPAIR_ENV`] so a later `load file` in the *same* process sees the
 /// choice (the interactive `option symbolnamerepair …` before `load file` path,
 /// and the in-process CLI drivers).

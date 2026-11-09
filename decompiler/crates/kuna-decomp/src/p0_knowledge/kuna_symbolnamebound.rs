@@ -183,13 +183,8 @@ const SYNTH_PREFIX_LEN: usize = 24;
 /// a load alive, and refusing the load over the spelling of its own safety limit
 /// would defeat the point.
 pub fn symbolnamebound_depth() -> Option<usize> {
-    match std::env::var(SYMBOLNAMEBOUND_ENV) {
-        Ok(v) => match parse_bound_token(v.trim()) {
-            Ok(bound) => bound,
-            Err(_) => Some(DEFAULT_SCOPE_DEPTH),
-        },
-        Err(_) => Some(DEFAULT_SCOPE_DEPTH),
-    }
+    crate::kuna_loadoptions::scoped(|o| o.symbolnamebound)
+        .unwrap_or_else(crate::kuna_loadoptions::env::symbolnamebound)
 }
 
 /// Parse one `symbolnamebound` token into a bound. Shared by the env reader
@@ -219,7 +214,7 @@ pub fn parse_symbolnamebound(p1: &str) -> KunaResult<(Option<usize>, String)> {
     Ok((bound, msg))
 }
 
-/// Bridge a `set_kuna_option("symbolnamebound", …)` choice to
+/// Export a `set_kuna_option("symbolnamebound", …)` choice to
 /// [`SYMBOLNAMEBOUND_ENV`] so a later `load file` in the *same* process sees it
 /// (the interactive `option symbolnamebound … ` before `load file` path, and the
 /// in-process CLI drivers).

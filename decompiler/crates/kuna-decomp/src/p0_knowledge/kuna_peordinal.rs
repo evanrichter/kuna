@@ -15,12 +15,12 @@
 /// other than the off-tokens means **enabled**; `off`/`0`/`false` means disabled.
 pub const PEORDINAL_ENV: &str = "KUNA_PEORDINAL";
 
-/// Whether ordinal-import naming is enabled for this process.
+/// Whether ordinal-import naming is enabled for the load in progress.
 pub fn peordinal_enabled() -> bool {
-    crate::options::env_toggle(PEORDINAL_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.peordinal).unwrap_or_else(crate::kuna_loadoptions::env::peordinal)
 }
 
-/// Bridge a `set_kuna_option("peordinal", val)` toggle to [`PEORDINAL_ENV`] so a
+/// Export a `set_kuna_option("peordinal", val)` toggle to [`PEORDINAL_ENV`] so a
 /// later `load file` in the same process sees the choice.
 pub fn set_peordinal_env(on: bool) {
     std::env::set_var(PEORDINAL_ENV, if on { "on" } else { "off" });

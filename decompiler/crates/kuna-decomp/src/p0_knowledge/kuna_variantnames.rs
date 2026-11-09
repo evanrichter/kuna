@@ -26,12 +26,12 @@
 /// other than the off-tokens ⇒ **enabled**; `off`/`0`/`false` ⇒ disabled.
 pub const VARIANTNAMES_ENV: &str = "KUNA_VARIANTNAMES";
 
-/// Whether discriminant-value naming is enabled for this process.
+/// Whether discriminant-value naming is enabled for the load in progress.
 pub fn variantnames_enabled() -> bool {
-    crate::options::env_toggle(VARIANTNAMES_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.variantnames).unwrap_or_else(crate::kuna_loadoptions::env::variantnames)
 }
 
-/// Bridge a `set_kuna_option("variantnames", val)` toggle to
+/// Export a `set_kuna_option("variantnames", val)` toggle to
 /// [`VARIANTNAMES_ENV`] so a later `load file` in the same process sees it.
 pub fn set_variantnames_env(on: bool) {
     std::env::set_var(VARIANTNAMES_ENV, if on { "on" } else { "off" });

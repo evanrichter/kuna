@@ -31,13 +31,13 @@
 /// fix); set to `off`/`0`/`false` ⇒ disabled (pre-fix behavior).
 pub const RELOCREBASE_ENV: &str = "KUNA_RELOCREBASE";
 
-/// Whether the relocatable-object analysis rebase is enabled for this process.
+/// Whether the relocatable-object analysis rebase is enabled for the load in progress.
 /// Default **on**: only an explicit off-token in [`RELOCREBASE_ENV`] disables it.
 pub fn relocrebase_enabled() -> bool {
-    crate::options::env_toggle(RELOCREBASE_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.relocrebase).unwrap_or_else(crate::kuna_loadoptions::env::relocrebase)
 }
 
-/// Bridge a `set_kuna_option("relocrebase", val)` toggle to [`RELOCREBASE_ENV`]
+/// Export a `set_kuna_option("relocrebase", val)` toggle to [`RELOCREBASE_ENV`]
 /// so a later `load file` in the *same* process sees the choice (the interactive
 /// `option relocrebase … ` before `load file` path, and the in-process CLI
 /// drivers).

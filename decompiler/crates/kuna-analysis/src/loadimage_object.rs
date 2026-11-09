@@ -75,16 +75,14 @@ use kuna_decomp::kuna_symbolnamechars::{sanitize_symbol_name_bytes, symbolnamech
 const BUFSIZE: usize = IMAGE_WINDOW_BYTES;
 
 /// (kuna) Whether the ET_REL relocatable-object load path is enabled (the
-/// `relocobjects` option, default ON).  The loader runs at `load file`, upstream
-/// of the per-function option machinery, so the toggle is bridged across layers
-/// by the [`RELOC_OBJECTS_ENV`](kuna_decomp::options::RELOC_OBJECTS_ENV) process
-/// env var that `Architecture::set_kuna_option("relocobjects", ...)` writes — any
-/// of `0`/`off`/`false`/`no` disables it; anything else (or unset) is ON.
+/// `relocobjects` load option, default ON). The loader runs at `load file`,
+/// upstream of the per-function option machinery, so it reads
+/// `LoadOptions::relocobjects`; outside a load scope it reads
+/// [`RELOC_OBJECTS_ENV`](kuna_decomp::options::RELOC_OBJECTS_ENV), where any of
+/// `0`/`off`/`false`/`no` disables it and anything else (or unset) is ON.
 pub(crate) fn reloc_objects_enabled() -> bool {
-    match std::env::var(kuna_decomp::options::RELOC_OBJECTS_ENV) {
-        Ok(v) => !matches!(v.trim(), "0" | "off" | "false" | "no" | "OFF"),
-        Err(_) => true,
-    }
+    use kuna_decomp::kuna_loadoptions::{env, scoped};
+    scoped(|o| o.relocobjects).unwrap_or_else(env::relocobjects)
 }
 
 /// The `(addr, name)` pairs of `aliases` that neither `primary` nor an earlier
@@ -1760,7 +1758,7 @@ fn language_id_for(
     // arch allowlist, then language detection (which honours the
     // `KUNA_SOURCELANG` force). Everything else keeps `model` untouched, and
     // the engine's default-model retry covers a spec that fails to load.
-    let model = if kuna_decomp::kuna_goabi::goabi_env_enabled()
+    let model = if kuna_decomp::kuna_goabi::goabi_enabled()
         && little
         && matches!(arch, Architecture::X86_64 | Architecture::I386 | Architecture::Aarch64)
         && crate::sourcelang::effective_compiler(file, bytes).is_golang()

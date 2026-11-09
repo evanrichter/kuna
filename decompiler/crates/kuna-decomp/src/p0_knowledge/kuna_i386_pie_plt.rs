@@ -36,10 +36,10 @@ pub const I386_PIE_PLT_ENV: &str = "KUNA_I386_PIE_PLT";
 /// disables it.  Consulted in `decode_i386` so that `--option i386_pie_plt off`
 /// (bridged to the env var by the CLI) reproduces the pre-fix output.
 pub fn i386_pie_plt_enabled() -> bool {
-    crate::options::env_toggle(I386_PIE_PLT_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.i386_pie_plt).unwrap_or_else(crate::kuna_loadoptions::env::i386_pie_plt)
 }
 
-/// Bridge a `set_kuna_option("i386_pie_plt", val)` toggle to [`I386_PIE_PLT_ENV`]
+/// Export a `set_kuna_option("i386_pie_plt", val)` toggle to [`I386_PIE_PLT_ENV`]
 /// so a later `load file` in the *same* process sees the choice.  In the usual
 /// CLI flow the env var is set on the `decomp_dbg` subprocess directly (before
 /// `load file`); this keeps the interactive `option i386_pie_plt …` *before*

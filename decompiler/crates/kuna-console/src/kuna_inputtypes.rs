@@ -49,6 +49,7 @@ impl ConsoleProgram {
         entry: &FunctionEntry,
         inputs: &[(Address, Rc<Datatype>)],
     ) -> KunaResult<(Funcdata, Vec<InputTypeOutcome>)> {
+        let _load = self.arch().load_scope();
         self.forget_synthesized_structs()?;
         let vma = entry.addr.get_offset();
         let mapped = self.dwarf_locals_for(vma);

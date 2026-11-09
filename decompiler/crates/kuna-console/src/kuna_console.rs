@@ -888,6 +888,7 @@ impl IfaceCommandAction for IfcKunaAssert {
                     .arch_mut()
                     .set_kuna_option(name, &tokens[0])
                     .map_err(|e| IfaceError::execution(e.explain().to_string()))?;
+                conf.arch().load_options().export_env(name);
                 conf.callwide_changed();
                 let mut out = msg;
                 out.push('\n');

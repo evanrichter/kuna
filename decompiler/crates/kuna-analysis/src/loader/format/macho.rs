@@ -45,11 +45,13 @@ pub use chained::{resolve_chained_fixups, ChainedBind, ChainedFixups};
 /// `decomp_dbg` subprocess), making the gate effective at *load* time — before
 /// any console `option` command is processed. Read live so a test can toggle it
 /// in-process.
-pub const MACHO_ARM64E_ENV: &str = "KUNA_MACHO_ARM64E";
+pub const MACHO_ARM64E_ENV: &str = kuna_decomp::kuna_loadoptions::MACHO_ARM64E_ENV;
 
-/// Whether the arm64e Apple-Silicon spec gate is enabled ([`MACHO_ARM64E_ENV`]).
+/// Whether the arm64e Apple-Silicon spec gate is enabled for the load in
+/// progress (`LoadOptions::macho_arm64e`, else [`MACHO_ARM64E_ENV`]).
 fn arm64e_gate_enabled() -> bool {
-    std::env::var_os(MACHO_ARM64E_ENV).map(|v| !v.is_empty()).unwrap_or(false)
+    use kuna_decomp::kuna_loadoptions::{env, scoped};
+    scoped(|o| o.macho_arm64e).unwrap_or_else(env::macho_arm64e)
 }
 
 /// Whether a thin Mach-O's header reports the arm64e CPU subtype

@@ -44,13 +44,13 @@
 /// than the off-tokens => **enabled**; set to `off`/`0`/`false` => disabled.
 pub const MSVCFPCONST_ENV: &str = "KUNA_MSVCFPCONST";
 
-/// Whether MSVC `__real@` constant recovery is enabled for this process.
+/// Whether MSVC `__real@` constant recovery is enabled for the load in progress.
 /// Default **on**: only an explicit off-token in [`MSVCFPCONST_ENV`] disables it.
 pub fn msvcfpconst_enabled() -> bool {
-    crate::options::env_toggle(MSVCFPCONST_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.msvcfpconst).unwrap_or_else(crate::kuna_loadoptions::env::msvcfpconst)
 }
 
-/// Bridge a `set_kuna_option("msvcfpconst", val)` toggle to [`MSVCFPCONST_ENV`] so
+/// Export a `set_kuna_option("msvcfpconst", val)` toggle to [`MSVCFPCONST_ENV`] so
 /// a later `load file` in the *same* process sees the choice (the interactive
 /// `option msvcfpconst …` before `load file` path, and the in-process CLI
 /// drivers).

@@ -35,13 +35,13 @@
 /// fix); set to `off`/`0`/`false` ⇒ disabled (pre-fix behavior).
 pub const DYNRELOCS_ENV: &str = "KUNA_DYNRELOCS";
 
-/// Whether the linked-image dynamic-relocation pass is enabled for this process.
+/// Whether the linked-image dynamic-relocation pass is enabled for the load in progress.
 /// Default **on**: only an explicit off-token in [`DYNRELOCS_ENV`] disables it.
 pub fn dynrelocs_enabled() -> bool {
-    crate::options::env_toggle(DYNRELOCS_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.dynrelocs).unwrap_or_else(crate::kuna_loadoptions::env::dynrelocs)
 }
 
-/// Bridge a `set_kuna_option("dynrelocs", val)` toggle to [`DYNRELOCS_ENV`] so a
+/// Export a `set_kuna_option("dynrelocs", val)` toggle to [`DYNRELOCS_ENV`] so a
 /// later `load file` in the *same* process sees the choice (the interactive
 /// `option dynrelocs …` before `load file` path, and the in-process CLI drivers).
 pub fn set_dynrelocs_env(on: bool) {

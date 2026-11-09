@@ -34,13 +34,13 @@
 /// to `off`/`0`/`false` ⇒ disabled (the legacy depth-3 budget).
 pub const TYPEDEPTH_ENV: &str = "KUNA_TYPEDEPTH";
 
-/// Whether full-depth DWARF type resolution is enabled for this process.
+/// Whether full-depth DWARF type resolution is enabled for the load in progress.
 /// Default **on**: only an explicit off-token in [`TYPEDEPTH_ENV`] disables it.
 pub fn typedepth_enabled() -> bool {
-    crate::options::env_toggle(TYPEDEPTH_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.typedepth).unwrap_or_else(crate::kuna_loadoptions::env::typedepth)
 }
 
-/// Bridge a `set_kuna_option("typedepth", val)` toggle to [`TYPEDEPTH_ENV`] so a
+/// Export a `set_kuna_option("typedepth", val)` toggle to [`TYPEDEPTH_ENV`] so a
 /// later `load file` in the *same* process sees the choice (the interactive
 /// `option typedepth … ` before `load file` path; the CLI sets the env var on the
 /// subprocess directly).

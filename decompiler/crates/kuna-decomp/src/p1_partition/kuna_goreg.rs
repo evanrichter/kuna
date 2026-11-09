@@ -33,14 +33,16 @@
 //! modeled — an access past 0xa0 renders as an offset off `g`, which is still
 //! anchored and honest.
 //!
-//! ## Why an env bridge
+//! ## Why a load-time option
 //!
 //! The install runs at architecture build (right after the cspec `<global>`
 //! decode), upstream of every per-function `option` command — the
-//! `goabi`/`sourcelang` seam, and the same [`GOREG_ENV`] pattern. The
-//! `Architecture::go_reg` field exists for catalog visibility (`kuna_live_value`),
-//! and flipping the option in a live session bridges the env for a later
-//! `load file`. Structurally inert off-Go: the gate requires the golang cspec
+//! `goabi`/`sourcelang` seam — so it reads `LoadOptions::goreg`
+//! (`crate::kuna_loadoptions`), whose CLI channel is [`GOREG_ENV`]. The image's
+//! Go toolchain version, which picks the layouts below, travels the same way:
+//! the bootstrap reads it off the build-info blob and records it on the load
+//! options before the engine is built. The `Architecture::go_reg` field exists
+//! for catalog visibility (`kuna_live_value`). Structurally inert off-Go: the gate requires the golang cspec
 //! (`archid` compiler field `golang`), which only `goabi auto` on a
 //! Go-detected image composes.
 
@@ -48,30 +50,21 @@ use kuna_base::error::KunaResult;
 use kuna_base::types::{int4, uint4};
 
 use crate::dtype::{type_metatype, TypeFactory, TypeField};
-use crate::options::env_toggle;
 
 /// Environment variable gating the goroutine-register naming. Absent or any
 /// non-off token means **enabled**; `off`/`0`/`false` disables.
 pub const GOREG_ENV: &str = "KUNA_GOREG";
 
-/// Whether the goroutine-register naming is enabled for this process.
+/// Whether the goroutine-register naming is enabled for the load in progress.
 pub fn goreg_enabled() -> bool {
-    env_toggle(GOREG_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.goreg).unwrap_or_else(crate::kuna_loadoptions::env::goreg)
 }
 
-/// Bridge a `set_kuna_option("goreg", val)` toggle to [`GOREG_ENV`] so a later
+/// Export a `set_kuna_option("goreg", val)` toggle to [`GOREG_ENV`] so a later
 /// `load file` in the same process sees the choice.
 pub fn set_goreg_env(on: bool) {
     std::env::set_var(GOREG_ENV, if on { "on" } else { "off" });
 }
-
-/// Environment variable carrying the image's Go toolchain version
-/// (`"<maj>.<min>"`) into the architecture build — set by the console
-/// bootstrap from the build-info blob (`kuna-analysis loader/gobuildinfo`)
-/// BEFORE the engine is built, because the shell install runs inside the
-/// cspec decode, upstream of every per-image fact write. Absent or
-/// unparsable means the go1.22 register-ABI baseline.
-pub const GOVERSION_ENV: &str = "KUNA_GOVERSION";
 
 /// The release-dependent pieces of the runtime layouts: go1.23 inserted
 /// `g.syscallbp`, go1.25 dropped `gobuf.ret` (verified against the vendored
@@ -96,16 +89,6 @@ impl GoLayout {
         GoLayout {
             gobuf_words: if (maj, min) >= (1, 25) { 6 } else { 7 },
             syscallbp: (maj, min) >= (1, 23),
-        }
-    }
-
-    /// The layout [`GOVERSION_ENV`] states, else the baseline.
-    pub fn from_env() -> GoLayout {
-        let Ok(v) = std::env::var(GOVERSION_ENV) else { return GoLayout::baseline() };
-        let mut it = v.trim().split('.');
-        match (it.next().and_then(|t| t.parse().ok()), it.next().and_then(|t| t.parse().ok())) {
-            (Some(maj), Some(min)) => GoLayout::from_version(maj, min),
-            _ => GoLayout::baseline(),
         }
     }
 
@@ -492,7 +475,7 @@ mod tests {
         assert_eq!(GoLayout::from_version(1, 25), GoLayout { gobuf_words: 6, syscallbp: true });
         assert_eq!(GoLayout::from_version(1, 25).gobuf_size(), 0x30);
         // Unknown / future majors stay conservative only in the fields they
-        // state; the env fallback is the baseline.
+        // state; an unknown version is the baseline.
         assert_eq!(GoLayout::baseline().gobuf_size(), GOBUF_SIZE);
         // The 1.25 g tail keeps the liblink-stable anchors: with the six-word
         // gobuf and syscallbp inserted, stktopsp..goid land back on the

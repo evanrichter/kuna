@@ -25,12 +25,12 @@
 /// other than the off-tokens means **enabled**; `off`/`0`/`false` disables.
 pub const SWIFTDEMANGLE_ENV: &str = "KUNA_SWIFTDEMANGLE";
 
-/// Whether Swift demangling is enabled for this process.
+/// Whether Swift demangling is enabled for the load in progress.
 pub fn swiftdemangle_enabled() -> bool {
-    crate::options::env_toggle(SWIFTDEMANGLE_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.swiftdemangle).unwrap_or_else(crate::kuna_loadoptions::env::swiftdemangle)
 }
 
-/// Bridge a `set_kuna_option("swiftdemangle", val)` toggle to
+/// Export a `set_kuna_option("swiftdemangle", val)` toggle to
 /// [`SWIFTDEMANGLE_ENV`] so a later `load file` in the same process sees it.
 pub fn set_swiftdemangle_env(on: bool) {
     std::env::set_var(SWIFTDEMANGLE_ENV, if on { "on" } else { "off" });

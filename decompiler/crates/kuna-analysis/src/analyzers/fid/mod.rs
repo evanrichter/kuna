@@ -51,7 +51,6 @@ pub mod extent;
 pub mod hash;
 pub mod skipper;
 
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use kuna_base::address::Address;
@@ -66,7 +65,7 @@ use crate::fid::skipper::{InstructionSkipper, X86InstructionSkipper};
 /// kept out of the per-decompilation `--option` surface in v1 (a real `--fidb
 /// <path>` flag is deferred, `docs/history/fid-design.md` §7.2). Absent / empty ⇒ the pass
 /// is inert (no DB to match against).
-pub const FID_DB_ENV: &str = "kuna_fid_db";
+pub const FID_DB_ENV: &str = kuna_decomp::kuna_loadoptions::FID_DB_ENV;
 
 /// The FID matching consumer pass — the kuna analog of Ghidra's FID identification
 /// analyzer (`FidServiceImpl` over the function-id query service), the third
@@ -188,16 +187,15 @@ impl AnalysisPass for FidPass {
     }
 }
 
-/// Resolve + load the `.fid` database named by [`FID_DB_ENV`]. `None` (the inert
-/// path) when the variable is unset / empty, the file is unreadable, or its bytes
-/// are not a valid `.fid` — every failure is a silent no-op (FID never fails a
-/// decompilation, faithful to the analysis-pass contract).
+/// Resolve + load the `.fid` database the load names (`LoadOptions::fid_db`,
+/// else [`FID_DB_ENV`]). `None` (the inert path) when none is named, the file is
+/// unreadable, or its bytes are not a valid `.fid` — every failure is a silent
+/// no-op (FID never fails a decompilation, faithful to the analysis-pass
+/// contract).
 fn load_fid_db(_ctx: &AnalysisCtx) -> Option<FidDb> {
-    let path = std::env::var_os(FID_DB_ENV)?;
-    if path.is_empty() {
-        return None;
-    }
-    let bytes = std::fs::read(PathBuf::from(path)).ok()?;
+    use kuna_decomp::kuna_loadoptions::{env, scoped};
+    let path = scoped(|o| o.fid_db.clone()).unwrap_or_else(env::fid_db)?;
+    let bytes = std::fs::read(path).ok()?;
     FidDb::load(&bytes).ok()
 }
 

@@ -42,13 +42,13 @@
 /// `off`/`0`/`false` ⇒ disabled (pre-fix behavior).
 pub const PDATACHAINED_ENV: &str = "KUNA_PDATACHAINED";
 
-/// Whether the chained-`UNWIND_INFO` entry skip is enabled for this process.
+/// Whether the chained-`UNWIND_INFO` entry skip is enabled for the load in progress.
 /// Default **on**: only an explicit off-token in [`PDATACHAINED_ENV`] disables it.
 pub fn pdatachained_enabled() -> bool {
-    crate::options::env_toggle(PDATACHAINED_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.pdatachained).unwrap_or_else(crate::kuna_loadoptions::env::pdatachained)
 }
 
-/// Bridge a `set_kuna_option("pdatachained", val)` toggle to [`PDATACHAINED_ENV`]
+/// Export a `set_kuna_option("pdatachained", val)` toggle to [`PDATACHAINED_ENV`]
 /// so a later `load file` in the *same* process sees the choice (the interactive
 /// `option pdatachained …` before `load file` path, and the in-process CLI drivers).
 pub fn set_pdatachained_env(on: bool) {

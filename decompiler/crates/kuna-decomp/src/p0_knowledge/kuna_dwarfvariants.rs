@@ -58,13 +58,13 @@
 /// `option` command.
 pub const DWARFVARIANTS_ENV: &str = "KUNA_DWARFVARIANTS";
 
-/// Whether DWARF variant-part import is enabled for this process.
+/// Whether DWARF variant-part import is enabled for the load in progress.
 /// Default **on**: only an explicit off-token in [`DWARFVARIANTS_ENV`] disables it.
 pub fn dwarfvariants_enabled() -> bool {
-    crate::options::env_toggle(DWARFVARIANTS_ENV, true)
+    crate::kuna_loadoptions::scoped(|o| o.dwarfvariants).unwrap_or_else(crate::kuna_loadoptions::env::dwarfvariants)
 }
 
-/// Bridge a `set_kuna_option("dwarfvariants", val)` toggle to
+/// Export a `set_kuna_option("dwarfvariants", val)` toggle to
 /// [`DWARFVARIANTS_ENV`] so a later `load file` in the *same* process sees the
 /// choice (the interactive `option dwarfvariants ...` before `load file` path;
 /// the CLI sets the env var on the subprocess directly).
