@@ -1481,6 +1481,13 @@ pub struct Architecture {
     /// (kuna) `flowmode aftercall`: the proof also continues after an
     /// unconditional call whose callee it proves to return; default **off**.
     pub analysis_flowmode_aftercall: bool,
+    /// (kuna) Recover `main` through the glibc 2.34+ `__wrap_main` trampoline
+    /// that a non-PIE ARM or AArch64 crt1 hands `__libc_start_main`
+    /// (`wrapmain`); default **off**. Decodes the PC-relative `_start`, follows
+    /// the trampoline's branch and any ARM long-branch veneer to `main`, lists
+    /// each as an entry, names the last `main`, seeds the Listing walk with them
+    /// and starts a Thumb `main` in Thumb.
+    pub analysis_wrapmain: bool,
     /// (kuna) Name the ELF routine crt1 hands to `__libc_start_main` `main` and
     /// declare it `int main(int argc, char **argv, char **envp)` (`elfmain`);
     /// default **on**. Entry oracle 4 already decodes that address on x86-64,
@@ -2524,6 +2531,7 @@ impl Architecture {
             analysis_addrtakenentry: false,
             analysis_flowmode: false,
             analysis_flowmode_aftercall: false,
+            analysis_wrapmain: false,
             analysis_elfmain: false,
             analysis_strings: false,
             analysis_widestrings: false,
@@ -2860,6 +2868,8 @@ impl Architecture {
         // (kuna) Mach-O `LC_MAIN` entry naming + prototype -- default-ON (DIV-111).
         // (kuna) PE user-entry naming -- default-ON.
         // (kuna) non-PIE ARM crt1 `_start`->`main` recovery -- default-ON (DIV-132).
+        // (kuna) glibc 2.34+ `__wrap_main` recovery -- default-OFF (output-changing).
+        self.analysis_wrapmain = false;
         // (kuna) ELF libc-start `main` naming + prototype -- default-ON.
         self.analysis_elfmain = true;
         // (kuna) `.eh_frame` LSDA landing-pad discovery — default-OFF (opt-in,

@@ -629,6 +629,9 @@ mod tests {
             // preset sweep or speed measurement needed before changing the
             // default output for every aggressive-mode decompile.
             "bytearrayc",
+            // `wrapmain` adds entries and a `main` name on stripped glibc 2.34+
+            // ARM and AArch64 executables.
+            "wrapmain",
         ];
 
         let agg = mode_overrides("aggressive").unwrap();

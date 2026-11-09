@@ -56,13 +56,13 @@ fn surface_count_is_101() {
 }
 
 #[test]
-fn settable_count_is_216() {
-    assert_eq!(kuna_num_settables(), 216);
-    assert_eq!(SETTABLE_TABLE.len(), 216);
+fn settable_count_is_217() {
+    assert_eq!(kuna_num_settables(), 217);
+    assert_eq!(SETTABLE_TABLE.len(), 217);
 }
 
 #[test]
-fn tier_counts_are_43_core_119_transform_54_analysis() {
+fn tier_counts_are_43_core_119_transform_55_analysis() {
     let mut core = 0;
     let mut transform = 0;
     let mut analysis = 0;
@@ -74,7 +74,7 @@ fn tier_counts_are_43_core_119_transform_54_analysis() {
             other => panic!("invalid tier {other:?} on {}", s.option),
         }
     }
-    assert_eq!((core, transform, analysis), (43, 119, 54));
+    assert_eq!((core, transform, analysis), (43, 119, 55));
 }
 
 #[test]
@@ -381,6 +381,9 @@ fn option_values_live_value_present_for_76() {
         // gate (no `live_field`); its live state is read console-side via
         // kuna_live_value, like the analysis-pass gates around it. Default-off.
         "rtti",
+        // (kuna) glibc 2.34+ `__wrap_main` recovery -- an analysis-tier gate with no
+        // codegen live reader, read console-side via kuna_live_value. Default-off.
+        "wrapmain",
         // (kuna) ELF libc-start `main` naming + prototype -- the ELF counterpart of
         // `machomain` above and the same seam: an analysis-tier gate with no
         // codegen live reader, read console-side via kuna_live_value. Default-ON.
@@ -1081,7 +1084,8 @@ fn emit_catalog_json_static_form_brackets_and_commas() {
     // +1 for `flirt`; its P1 row sits beside `fid`.
     // +1 for `chkstkdarwin`, its P2 row after `msvcftol`.
     // +1 for `calleeargs`; its P4 row sits after `argclobber`.
-    assert_eq!(json.matches("},\n").count(), 215);
+    // +1 for `wrapmain`; its P1 row sits before `elfmain`.
+    assert_eq!(json.matches("},\n").count(), 216);
 }
 
 #[test]

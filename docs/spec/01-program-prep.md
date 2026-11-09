@@ -6713,6 +6713,28 @@ The one shape oracle 4 cannot see is the non-PIE ARM32 crt1 above, and there
 `armlibcmain` already emits the entry and the name; `elfmain` contributes only the
 prototype at that address.
 
+(kuna) **The glibc 2.34+ `__wrap_main` crt1** (`wrapmain`, default off;
+`decompiler/crates/kuna-analysis/src/analyzers/entry/kuna_wrapmain.rs
+(WrapMainPass)`) is a second shape oracle 4 cannot see. From glibc 2.34 the crt1
+`_start` on 32-bit ARM and AArch64 hands `__libc_start_main` a one-branch
+trampoline, `__wrap_main`, rather than `main`, and computes its address from the
+PC: `ldr r0,[pc,#imm] ; add rX,pc,#imm ; add r0,rX,r0` on A32, whose pool word is
+an offset `armlibcmain` refuses as an absolute address, and `adrp x0 ; add
+x0,x0,#lo12` on AArch64, where oracle 4 follows only the PIE `adrp ; ldr` GOT
+load. A stripped image then names no `main`; on a mixed ARM/Thumb image the
+trampoline's `b` lands on a linker veneer the Listing walk does not follow, so
+the program's own functions are never discovered at all. On, the pass decodes
+both shapes, anchored on the `bl` to the PLT stub named `__libc_start_main`,
+follows the trampoline's branch only inside the `_start` window and then at most
+four direct branches and ARM long-branch veneers (`ldr pc,[pc,#-4]`, `ldr ip,[pc]
+; bx ip`), lists each step as an entry and names the last `main`. The steps and
+`main` seed the Listing walk, and `armwalkmode` starts a Thumb `main` in Thumb.
+It refuses an image that is not an executable ARM or AArch64 ELF, a Thumb
+`_start`, an image with no `__libc_start_main` stub, a step outside every
+executable section, and a `main` that already carries a function symbol, so an
+unstripped image is unchanged. As with `armlibcmain`, `elfmain` contributes only
+the prototype, parked on the name this pass installs.
+
 What keeps the claim honest is that oracle 4's evidence is good enough to add a
 function entry but not, on its own, to assert that the function is the C `main` —
 its x86-64 arm matches an argument-setup encoding and a following `call`, and any

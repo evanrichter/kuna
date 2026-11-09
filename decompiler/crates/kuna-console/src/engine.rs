@@ -3417,6 +3417,10 @@ fn analysis_pass_enabled(arch: &Architecture, pass_id: &str) -> bool {
         // (kuna) non-PIE ARM crt1 `_start`->`main` recovery — a standalone stashed
         // pass whose one entry and one name are computed at LOAD but COMMITTED only
         // when this gate is on. Default-ON; off restores the previous inventory.
+        // (kuna) glibc 2.34+ `__wrap_main` recovery — a standalone stashed pass
+        // whose entries, `main` name and Thumb paint are computed at LOAD but
+        // COMMITTED only when this gate is on. Default-OFF.
+        "wrapmain" => arch.analysis_wrapmain,
         // (kuna) ELF libc-start `main` naming + prototype — a standalone stashed
         // pass whose one name and one prototype are computed at LOAD but
         // COMMITTED only when this gate is on. Default-ON; off restores the
