@@ -2128,7 +2128,13 @@ funcsym stream:
   relocating would fold the call target to zero. Slots outside RELRO — a
   `RELATIVE` pointer in ordinary `.data` — are still filled in, because that IS
   the value at process start, but are never declared constant, because the
-  program may legitimately overwrite them.
+  program may legitimately overwrite them. The exception is a written
+  `GLOB_DAT` slot, which is constant wherever it sits: the loader fills it once
+  at startup and never lazily. GNU ld on 32-bit ARM keeps `GLOB_DAT` and lazily
+  bound `JUMP_SLOT` entries in one `.got` that RELRO stops short of without
+  `-z now`, so a PIC read of a global through its slot folds to the global. A
+  `JUMP_SLOT` or `RELATIVE` slot outside RELRO stays variable. x86-64 and
+  AArch64 keep their eager slots inside RELRO.
 
   A MIPS dynamic image relocates its primary GOT with no relocation records at
   all (glibc's `elf_machine_got_rel`), so the walk above never reaches it. Its

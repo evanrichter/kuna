@@ -32,6 +32,16 @@
 //!    load unfolded, and declaring constancy without applying the relocation
 //!    would fold the call target to *zero*.
 //!
+//!    A written `GLOB_DAT` slot is constant even outside `PT_GNU_RELRO`: the
+//!    loader fills it once at startup, never lazily, and program code does not
+//!    store to the GOT. GNU ld on ARM keeps one `.got` for `GLOB_DAT` and the
+//!    lazily bound `JUMP_SLOT`s alike, so without `-z now` its RELRO segment
+//!    stops before `.got` and a PIC access to a global
+//!    (`ldr r2,[pc,#lit]; ldr r2,[r5,r2]`) would read the slot as a variable
+//!    (`*dat_2020 = …`) instead of folding to the global. A `JUMP_SLOT` or
+//!    `RELATIVE` slot outside RELRO stays variable: the former is rewritten by
+//!    lazy binding, the latter may be an ordinary writable pointer in `.data`.
+//!
 //! Both are returned to the loader, which patches its own segment bytes and adds
 //! the constant slots to `ObjectLoadImage::dynreloc_const` (see
 //! [`crate::loadimage_object`]).
@@ -215,11 +225,10 @@ pub fn resolve(file: &object::File, bytes: &[u8]) -> DynRelocs {
         };
         out.writes.push(DynRelocWrite { vma: offset, value, width: table.width as u8 });
 
-        if let Some((lo, hi)) = relro {
-            let last = offset.wrapping_add(table.width as u64 - 1);
-            if offset >= lo && last < hi {
-                out.const_ranges.push((offset, last));
-            }
+        let last = offset.wrapping_add(table.width as u64 - 1);
+        let frozen = relro.is_some_and(|(lo, hi)| offset >= lo && last < hi);
+        if frozen || table.is_glob_dat(&reloc) {
+            out.const_ranges.push((offset, last));
         }
     }
 
@@ -281,6 +290,15 @@ impl ElfTable {
             mask: if width == 8 { u64::MAX } else { u32::MAX as u64 },
             dynsyms,
         })
+    }
+
+    /// Whether `relocation` is a `GLOB_DAT`, which the dynamic loader fills once,
+    /// at load, and never lazily.
+    fn is_glob_dat(&self, relocation: &object::Relocation) -> bool {
+        matches!(
+            (relocation.flags(), self.triple),
+            (RelocationFlags::Elf { r_type }, Some((_, glob_dat, _))) if r_type == glob_dat
+        )
     }
 
     /// `relocation` at `offset`: a `RELATIVE` one is a [`FixupKind::Rebase`],

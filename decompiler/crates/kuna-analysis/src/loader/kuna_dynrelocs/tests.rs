@@ -289,6 +289,43 @@ fn i386_rel_table_reads_the_implicit_addend_from_the_slot() {
     assert_eq!(r.const_ranges, vec![(GOT_VMA, GOT_VMA + 3), (GOT_VMA + 4, GOT_VMA + 7)]);
 }
 
+/// ARM's GNU ld layout without `-z now`: RELRO covers only the first slot, and
+/// one `.got` holds a `GLOB_DAT`, a lazily bound `JUMP_SLOT` and a `RELATIVE`
+/// after it. All three defined slots are written; the `GLOB_DAT` one is constant
+/// although RELRO misses it, and the other two stay variable.
+#[test]
+fn arm_globdat_outside_relro_is_constant() {
+    let mut relocs = rel32(GOT_VMA as u32, 0, 23); // R_ARM_RELATIVE, inside RELRO
+    relocs.extend(rel32(GOT_VMA as u32 + 4, 1, 21)); // R_ARM_GLOB_DAT (defined)
+    relocs.extend(rel32(GOT_VMA as u32 + 8, 1, 22)); // R_ARM_JUMP_SLOT (defined)
+    relocs.extend(rel32(GOT_VMA as u32 + 12, 0, 23)); // R_ARM_RELATIVE
+    relocs.extend(rel32(GOT_VMA as u32 + 16, 2, 21)); // R_ARM_GLOB_DAT (import)
+    let mut got = vec![0u8; 20];
+    got[..4].copy_from_slice(&(TEXT_VMA as u32).to_le_bytes());
+    got[12..16].copy_from_slice(&(TEXT_VMA as u32 + 4).to_le_bytes());
+    let secs = vec![
+        Sec { ty: SHT_DYNSYM, flags: 2, addr: 0, data: dynsym(false), link: 2, info: 1, entsize: 16 },
+        Sec { ty: SHT_STRTAB, flags: 2, addr: 0, data: dynstr(), link: 0, info: 0, entsize: 0 },
+        Sec { ty: SHT_REL, flags: 2, addr: 0, data: relocs, link: 1, info: 0, entsize: 8 },
+        Sec { ty: SHT_PROGBITS, flags: 6, addr: TEXT_VMA, data: vec![0; 16], link: 0, info: 0, entsize: 0 },
+        Sec { ty: SHT_PROGBITS, flags: 3, addr: GOT_VMA, data: got, link: 0, info: 0, entsize: 0 },
+        Sec { ty: SHT_STRTAB, flags: 0, addr: 0, data: b"\0".to_vec(), link: 0, info: 0, entsize: 0 },
+    ];
+    let bytes = build_elf(false, 40, &secs, 4);
+    let r = run(&bytes);
+    assert_eq!(
+        r.writes,
+        vec![
+            DynRelocWrite { vma: GOT_VMA, value: TEXT_VMA, width: 4 },
+            DynRelocWrite { vma: GOT_VMA + 4, value: TEXT_VMA, width: 4 },
+            DynRelocWrite { vma: GOT_VMA + 8, value: TEXT_VMA, width: 4 },
+            DynRelocWrite { vma: GOT_VMA + 12, value: TEXT_VMA + 4, width: 4 },
+        ],
+        "the undefined GLOB_DAT import must not be written"
+    );
+    assert_eq!(r.const_ranges, vec![(GOT_VMA, GOT_VMA + 3), (GOT_VMA + 4, GOT_VMA + 7)]);
+}
+
 /// An architecture kuna has no triple for produces nothing rather than guessing.
 #[test]
 fn unhandled_machine_is_inert() {

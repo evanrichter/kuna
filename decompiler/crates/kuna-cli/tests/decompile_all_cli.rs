@@ -58,7 +58,7 @@ fn arm_thumb() -> String {
 
 /// Frame recovery finds the Thumb function at 0x48a under `--isa arm`,
 /// but its modes only steer the walk: decompilation decodes in the stated ISA,
-/// so only `--isa auto` reads 0x48a as Thumb and reaches its GOT load.
+/// so only `--isa auto` reads 0x48a as Thumb and folds its GOT load to `tab`.
 #[test]
 fn explicit_isa_does_not_pin_uniform_recovery_spans() {
     let bin = repo_root().join("decompiler/crates/kuna-analysis/tests/fixtures/arm_interwork_stubs_o0_le32");
@@ -76,9 +76,9 @@ fn explicit_isa_does_not_pin_uniform_recovery_spans() {
         function["code"].as_str().unwrap().to_string()
     };
     let thumb = code_at_48a("auto");
-    assert!(thumb.contains("dat_2010") && !thumb.contains("bad instruction data"), "{thumb}");
+    assert!(thumb.contains("tab[") && !thumb.contains("bad instruction data"), "{thumb}");
     let arm = code_at_48a("arm");
-    assert!(arm.contains("bad instruction data") && !arm.contains("dat_2010"), "{arm}");
+    assert!(arm.contains("bad instruction data") && !arm.contains("tab["), "{arm}");
 }
 
 fn arm_thumb_pe() -> String {
