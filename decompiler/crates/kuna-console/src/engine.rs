@@ -4174,7 +4174,7 @@ pub fn bootstrap_from_image_with_isa_with_specs(
     spec_roots: &[impl IntoSpecRoot],
     isa: Option<ArmIsa>,
 ) -> KunaResult<ConsoleProgram> {
-    bootstrap_from_image_with_options(path, target, spec_roots, isa, &LoadOptions::from_env())
+    bootstrap_image(path, target, spec_roots, isa, &LoadOptions::from_env(), true)
 }
 
 /// [`bootstrap_from_image_with_isa`] with the load-time options explicit, as
@@ -4186,14 +4186,39 @@ pub fn bootstrap_from_image_with_options(
     isa: Option<ArmIsa>,
     options: &LoadOptions,
 ) -> KunaResult<ConsoleProgram> {
+    bootstrap_image(path, target, spec_roots, isa, options, false)
+}
+
+/// The image dispatch behind both image bootstraps; `from_env` as in
+/// [`bootstrap_object`].
+fn bootstrap_image(
+    path: &str,
+    target: &str,
+    spec_roots: &[impl IntoSpecRoot],
+    isa: Option<ArmIsa>,
+    options: &LoadOptions,
+    from_env: bool,
+) -> KunaResult<ConsoleProgram> {
     if file_is_te_image(path) {
-        let _load = options.enter();
+        let _load = enter_load(options, from_env);
         bootstrap_from_te_with_specs(path, target, spec_roots, isa)
     } else if let Some(bytes) = file_mz_dos_image(path) {
-        let _load = options.enter();
+        let _load = enter_load(options, from_env);
         bootstrap_from_mz_bytes_with_specs(path, &bytes, target, spec_roots, isa)
     } else {
-        bootstrap_from_object_with_options(path, target, spec_roots, isa, options)
+        bootstrap_object(path, target, spec_roots, isa, options, from_env)
+    }
+}
+
+/// Put a load's options in force on this thread: `options` for an
+/// explicit-options load, the live environment for an entry point that takes
+/// none (`options` is then [`LoadOptions::from_env`], read for the bootstrap's
+/// own decisions). The program built under the scope keeps that choice.
+fn enter_load(options: &LoadOptions, from_env: bool) -> kuna_decomp::kuna_loadoptions::LoadScope {
+    if from_env {
+        kuna_decomp::kuna_loadoptions::enter_environment()
+    } else {
+        options.enter()
     }
 }
 
@@ -4528,7 +4553,7 @@ pub fn bootstrap_from_object_with_isa_with_specs(
     spec_roots: &[impl IntoSpecRoot],
     isa: Option<ArmIsa>,
 ) -> KunaResult<ConsoleProgram> {
-    bootstrap_from_object_with_options(path, target, spec_roots, isa, &LoadOptions::from_env())
+    bootstrap_object(path, target, spec_roots, isa, &LoadOptions::from_env(), true)
 }
 
 /// [`bootstrap_from_object`] with every setting explicit: the ARM decode mode
@@ -4542,10 +4567,27 @@ pub fn bootstrap_from_object_with_options(
     isa: Option<ArmIsa>,
     options: &LoadOptions,
 ) -> KunaResult<ConsoleProgram> {
+    bootstrap_object(path, target, spec_roots, isa, options, false)
+}
+
+/// The object bootstrap. `from_env` is set by the entry points that take no
+/// options: their load and the program it builds read the environment live, and
+/// they publish the image's Go toolchain version in
+/// [`GOVERSION_ENV`](kuna_decomp::kuna_goreg::GOVERSION_ENV) (cleared for a
+/// non-Go image), as they always have. An explicit-options load leaves the
+/// environment alone and never reads it.
+fn bootstrap_object(
+    path: &str,
+    target: &str,
+    spec_roots: &[impl IntoSpecRoot],
+    isa: Option<ArmIsa>,
+    options: &LoadOptions,
+    from_env: bool,
+) -> KunaResult<ConsoleProgram> {
     // The caller's options are in force from the first byte read: a gate read
     // outside every scope falls back to the environment, which an explicit
     // load must never consult.
-    let _caller = options.enter();
+    let _caller = enter_load(options, from_env);
     let target = kuna_analysis::loadimage_object::explicit_language_target(target).unwrap_or("");
     let registry = build_registry();
 
@@ -4594,10 +4636,21 @@ pub fn bootstrap_from_object_with_options(
     // by release (go1.23's g.syscallbp, go1.25's dropped gobuf.ret). It travels
     // on the load options, which every gate below reads; this scope replaces the
     // caller's until the load returns.
+    // An environment-reading load takes the version from the image alone, as
+    // it always has: a stale `KUNA_GOVERSION` must not outlive a non-Go image.
     let mut options = options.clone();
+    let stated = if from_env { None } else { options.go_version };
     options.go_version =
-        kuna_analysis::loader::gobuildinfo::go_toolchain_version(&bytes).or(options.go_version);
-    let _load = options.enter();
+        kuna_analysis::loader::gobuildinfo::go_toolchain_version(&bytes).or(stated);
+    if from_env {
+        match options.go_version {
+            Some((maj, min)) => {
+                std::env::set_var(kuna_decomp::kuna_goreg::GOVERSION_ENV, format!("{maj}.{min}"))
+            }
+            None => std::env::remove_var(kuna_decomp::kuna_goreg::GOVERSION_ENV),
+        }
+    }
+    let _load = enter_load(&options, from_env);
     let explicit_isa = isa.is_some();
     let import_proofs = kuna_analysis::loader::ImportProofScope::enter(&bytes);
     // LoadImageBfd(filename) + open(): parse the ELF (machine, segments, symbols).

@@ -44,7 +44,7 @@
 pub const GOABI_ENV: &str = "KUNA_GOABI";
 
 /// Whether golang-cspec auto-selection is enabled for the load in progress.
-pub fn goabi_enabled() -> bool {
+pub fn goabi_env_enabled() -> bool {
     crate::kuna_loadoptions::scoped(|o| o.goabi).unwrap_or_else(crate::kuna_loadoptions::env::goabi)
 }
 
@@ -81,11 +81,11 @@ mod tests {
     #[test]
     fn env_gate_default_on_and_off_tokens() {
         std::env::remove_var(GOABI_ENV);
-        assert!(goabi_enabled(), "unset env => default auto");
+        assert!(goabi_env_enabled(), "unset env => default auto");
         std::env::set_var(GOABI_ENV, "off");
-        assert!(!goabi_enabled());
+        assert!(!goabi_env_enabled());
         std::env::set_var(GOABI_ENV, "auto");
-        assert!(goabi_enabled());
+        assert!(goabi_env_enabled());
         std::env::remove_var(GOABI_ENV);
     }
 }

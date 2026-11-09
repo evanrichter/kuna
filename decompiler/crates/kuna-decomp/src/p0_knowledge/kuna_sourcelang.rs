@@ -101,6 +101,12 @@ pub fn forced() -> Option<SourceLang> {
         .unwrap_or_else(crate::kuna_loadoptions::env::sourcelang)
 }
 
+/// The forced source language in this process's environment, if any. Reads
+/// only the environment; a load in progress reads [`forced`].
+pub fn forced_from_env() -> Option<SourceLang> {
+    crate::kuna_loadoptions::env::sourcelang()
+}
+
 /// Export a `set_kuna_option("sourcelang", val)` choice to [`SOURCELANG_ENV`]
 /// so a later `load file` in the same process sees it (`auto` clears it).
 pub fn set_sourcelang_env(forced: Option<SourceLang>) {

@@ -66,6 +66,14 @@ pub fn set_goreg_env(on: bool) {
     std::env::set_var(GOREG_ENV, if on { "on" } else { "off" });
 }
 
+/// Environment variable carrying the image's Go toolchain version
+/// (`"<maj>.<min>"`). The console bootstrap's environment-reading entry points
+/// set it from the build-info blob (`kuna-analysis loader/gobuildinfo`) and
+/// clear it for a non-Go image; a load with explicit options carries the
+/// version on `LoadOptions::go_version` instead. Absent or unparsable means
+/// the go1.22 register-ABI baseline.
+pub const GOVERSION_ENV: &str = "KUNA_GOVERSION";
+
 /// The release-dependent pieces of the runtime layouts: go1.23 inserted
 /// `g.syscallbp`, go1.25 dropped `gobuf.ret` (verified against the vendored
 /// go1.22.10 and go1.25.3 sources; 1.23/1.24 carry `syscallbp` with the
@@ -89,6 +97,14 @@ impl GoLayout {
         GoLayout {
             gobuf_words: if (maj, min) >= (1, 25) { 6 } else { 7 },
             syscallbp: (maj, min) >= (1, 23),
+        }
+    }
+
+    /// The layout [`GOVERSION_ENV`] states, else the baseline.
+    pub fn from_env() -> GoLayout {
+        match crate::kuna_loadoptions::env::go_version() {
+            Some((major, minor)) => GoLayout::from_version(major, minor),
+            None => GoLayout::baseline(),
         }
     }
 

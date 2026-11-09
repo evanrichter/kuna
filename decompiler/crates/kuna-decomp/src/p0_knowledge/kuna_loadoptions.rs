@@ -13,7 +13,9 @@
 //! `--option` gate onto the `decomp_dbg` subprocess, and the console's
 //! `load file` turns it back into options with [`LoadOptions::from_env`]. A
 //! gate read outside any scope falls back to its environment variable, which
-//! keeps every older entry point behaving as before.
+//! keeps every older entry point behaving as before: those entry points load
+//! under [`enter_environment`], and the program they build keeps reading the
+//! environment live for its later analysis and decompiles.
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -168,7 +170,7 @@ impl LoadOptions {
             macho_slice: env::macho_slice(),
             pdb_path: env::pdb_path(),
             fid_db: env::fid_db(),
-            go_version: None,
+            go_version: env::go_version(),
         }
     }
 
@@ -189,10 +191,11 @@ impl LoadOptions {
     }
 
     /// Write the named option's value to the environment variable a later
-    /// `load file` in this process reads. The console calls this after an
-    /// `option` command so the choice outlives the program it was set on; a
-    /// library never needs it. A name that is not a load-time option is
-    /// ignored.
+    /// `load file` in this process reads. `Architecture::set_kuna_option`
+    /// already does this for the option it sets; this serves a caller that
+    /// changed the options through `Architecture::load_options_mut`. A load
+    /// with explicit options never needs it. A name that is not a load-time
+    /// option is ignored.
     pub fn export_env(&self, option: &str) {
         use crate::*;
         match option {
@@ -242,6 +245,21 @@ thread_local! {
 pub fn enter(options: Rc<LoadOptions>) -> LoadScope {
     let previous = CURRENT.with(|current| current.replace(Some(options)));
     LoadScope { previous }
+}
+
+/// Hand this thread back to the environment until the scope drops: every gate
+/// reads its environment variable when it runs, as the entry points that take
+/// no options always have. A program built under this scope keeps reading the
+/// environment through [`crate::infra::architecture::Architecture::load_scope`].
+pub fn enter_environment() -> LoadScope {
+    let previous = CURRENT.with(|current| current.replace(None));
+    LoadScope { previous }
+}
+
+/// Whether some options are in force on this thread. Unlike [`scoped`], asking
+/// does not count as an environment read.
+pub(crate) fn options_in_force() -> bool {
+    CURRENT.with(|current| current.borrow().is_some())
 }
 
 /// `read` applied to the options in force on this thread, or `None` outside
@@ -419,6 +437,14 @@ pub mod env {
 
     pub fn fid_db() -> Option<PathBuf> {
         path(FID_DB_ENV)
+    }
+
+    /// The `"<maj>.<min>"` release in `KUNA_GOVERSION`; `None` when it is
+    /// unset or unparsable.
+    pub fn go_version() -> Option<(u16, u16)> {
+        let value = std::env::var(crate::kuna_goreg::GOVERSION_ENV).ok()?;
+        let mut parts = value.trim().split('.');
+        Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
     }
 }
 

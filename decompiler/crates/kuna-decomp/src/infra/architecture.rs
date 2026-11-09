@@ -2183,6 +2183,9 @@ pub struct Architecture {
     /// force when it was built, updated by a load-time `option` command.
     /// [`Self::load_scope`] puts them back in force for later analysis.
     load_options: Rc<crate::kuna_loadoptions::LoadOptions>,
+    /// (kuna) Built with no options in force: an entry point that takes none
+    /// loaded this program, so its gates keep reading the environment live.
+    load_options_from_env: bool,
     /// Validated import slots. Never registered as executable FunctionSymbols.
     pub ppc32_pic_imports: std::collections::BTreeMap<u64, crate::kuna_ppc32piccalls::ImportSlot>,
     /// (kuna) Gate the x86-64 IFUNC (`R_X86_64_IRELATIVE`) `.plt.sec`/`.iplt`
@@ -3044,6 +3047,7 @@ impl Architecture {
             symbol_snapshots: RefCell::new(SymbolSnapshots::default()),
             kuna_snapshot_cache: std::env::var_os("KUNA_NO_SYMBOL_SNAPSHOT_CACHE").is_none(),
             load_options: crate::kuna_loadoptions::LoadOptions::in_force(),
+            load_options_from_env: !crate::kuna_loadoptions::options_in_force(),
 
             decode_sla: None,
             decode_truncations: None,
@@ -3929,8 +3933,11 @@ impl Architecture {
         self.analysis_armwalkmode = true; // (kuna) ARM walk decodes in the mode its control flow carries
         self.analysis_entrythumbflow = true; // (kuna) entry-reachable Thumb context default-on; inert without a Thumb-bit entry
         self.analysis_mips_gp = true;
-        self.analysis_ppc32picimports =
-            crate::kuna_ppc32picimports::Mode::loaded(self.load_options.ppc32picimports); // (kuna) abi when the loader applied it, else off
+        self.analysis_ppc32picimports = if self.load_options_from_env {
+            crate::kuna_ppc32picimports::Mode::loaded()
+        } else {
+            crate::kuna_ppc32picimports::Mode::loaded_with(self.load_options.ppc32picimports)
+        }; // (kuna) abi when the loader applied it, else off
         self.analysis_i386_pie_plt = true; // (kuna) i386-PIE PLT decode default-on (angr)
         self.analysis_relocrebase = true; // (kuna) DIV-79 relocatable-object analysis rebase default-ON (GH-289)
         self.analysis_dynrelocs = true; // (kuna) DIV-84 linked-image dynamic relocations default-ON
@@ -4084,8 +4091,10 @@ impl Architecture {
     /// `maxlinewidth`/`commentstyle`, which are recorded-no-op printer stubs
     /// with no state to reset.
     pub fn reset_wire_defaults(&mut self) {
-        // The load-time PPC32 PIC mode is program state, so a wire reset clears it too.
+        // The load-time PPC32 PIC mode is program and process state, so a wire
+        // reset clears both.
         self.load_options_mut().ppc32picimports = crate::kuna_ppc32picimports::Mode::Off;
+        crate::kuna_ppc32picimports::Mode::Off.set_env();
         self.reset_defaults();
         self.print.context = crate::printlanguage::PrintContext::new();
         self.print.reset_wire_option_defaults();
@@ -5359,7 +5368,12 @@ impl Architecture {
         let Some(reg) = crate::kuna_goreg::goroutine_register(&self.archid) else {
             return Ok(());
         };
-        if !self.load_options.goreg {
+        let enabled = if self.load_options_from_env {
+            crate::kuna_goreg::goreg_enabled()
+        } else {
+            self.load_options.goreg
+        };
+        if !enabled {
             return Ok(());
         }
         let scope = match self.symboltab.get_global_scope() {
@@ -5814,13 +5828,22 @@ impl Architecture {
     }
 
     /// (kuna) Put this program's load-time options in force on this thread until
-    /// the scope drops, so the gates that run after the load read them.
+    /// the scope drops, so the gates that run after the load read them. A
+    /// program loaded with no options defers to the environment instead, so its
+    /// gates read their variables live, as they did before `LoadOptions`.
     pub fn load_scope(&self) -> crate::kuna_loadoptions::LoadScope {
-        crate::kuna_loadoptions::enter(Rc::clone(&self.load_options))
+        if self.load_options_from_env {
+            crate::kuna_loadoptions::enter_environment()
+        } else {
+            crate::kuna_loadoptions::enter(Rc::clone(&self.load_options))
+        }
     }
 
     /// (kuna `goreg`) The runtime layouts of the image's Go toolchain release.
     fn go_layout(&self) -> crate::kuna_goreg::GoLayout {
+        if self.load_options_from_env {
+            return crate::kuna_goreg::GoLayout::from_env();
+        }
         match self.load_options.go_version {
             Some((major, minor)) => crate::kuna_goreg::GoLayout::from_version(major, minor),
             None => crate::kuna_goreg::GoLayout::baseline(),

@@ -225,7 +225,6 @@ fn the_environment_feeds_the_entry_points_that_read_it() {
     let from_env = LoadOptions::from_env();
     assert!(!from_env.goabi);
     assert_eq!(from_env.sourcelang, Some(SourceLang::Rust));
-    let before = snapshot();
     let mut prog = bootstrap_from_object(go.to_str().unwrap(), "", &[specs()]).unwrap();
     prog.commit_pending_analysis().unwrap();
     assert_eq!(
@@ -233,9 +232,13 @@ fn the_environment_feeds_the_entry_points_that_read_it() {
         ("gcc".into(), SourceLang::Rust, Some((1, 25)))
     );
     assert_eq!(
-        snapshot(),
-        before,
-        "the image's Go release no longer travels in KUNA_GOVERSION"
+        std::env::var("KUNA_GOVERSION").as_deref(),
+        Ok("1.25"),
+        "an environment-reading load publishes the image's Go release"
+    );
+    assert_eq!(
+        kuna_decomp::kuna_goreg::GoLayout::from_env(),
+        kuna_decomp::kuna_goreg::GoLayout::from_version(1, 25)
     );
     for name in ENV_VARS {
         std::env::remove_var(name);
@@ -337,4 +340,100 @@ fn an_explicit_program_never_reads_the_environment() {
         "a gate read the environment on an explicit program's thread"
     );
     std::fs::remove_file(go).unwrap();
+}
+
+/// The public items `LoadOptions` replaced inside Kuna keep their names,
+/// signatures and environment readings, so a caller written against the
+/// environment API still builds and behaves as before.
+#[test]
+fn the_environment_api_keeps_its_names_and_readings() {
+    use kuna_decomp::kuna_goreg::{GoLayout, GOVERSION_ENV};
+    use kuna_decomp::kuna_ppc32picimports::Mode;
+    use kuna_decomp::{kuna_goabi, kuna_sourcelang};
+    use std::path::PathBuf;
+
+    let _env = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
+    let _: fn() -> Option<PathBuf> = kuna_analysis::pdb::locate::pdb_path_from_env;
+    let _: fn() -> Option<SourceLang> = kuna_sourcelang::forced_from_env;
+    let _: fn() -> bool = kuna_goabi::goabi_env_enabled;
+    let _: fn() -> GoLayout = GoLayout::from_env;
+    let _: fn() -> Mode = Mode::from_env;
+    let _: fn() -> Mode = Mode::loaded;
+    let _: &str = GOVERSION_ENV;
+
+    std::env::set_var("kuna_pdb_path", "/some/where.pdb");
+    std::env::set_var("KUNA_SOURCELANG", "rust");
+    std::env::set_var("KUNA_GOABI", "off");
+    std::env::set_var(GOVERSION_ENV, "1.23");
+    std::env::set_var("KUNA_PPC32PICIMPORTS", "abi");
+    // The `*_from_env` readers read the environment even while a load with
+    // other options is in force.
+    {
+        let _load = LoadOptions::default().enter();
+        assert_eq!(
+            kuna_analysis::pdb::locate::pdb_path_from_env(),
+            Some(PathBuf::from("/some/where.pdb"))
+        );
+        assert_eq!(kuna_sourcelang::forced_from_env(), Some(SourceLang::Rust));
+        assert_eq!(GoLayout::from_env(), GoLayout::from_version(1, 23));
+        assert_eq!(Mode::from_env(), Mode::Abi);
+    }
+    // Outside a load, the gates read the environment as they always did.
+    assert!(!kuna_goabi::goabi_env_enabled());
+    assert_eq!(Mode::loaded(), Mode::Abi);
+    for name in ["kuna_pdb_path", "KUNA_SOURCELANG", "KUNA_GOABI", GOVERSION_ENV, "KUNA_PPC32PICIMPORTS"] {
+        std::env::remove_var(name);
+    }
+    assert_eq!(kuna_analysis::pdb::locate::pdb_path_from_env(), None);
+    assert_eq!(GoLayout::from_env(), GoLayout::baseline());
+    assert!(kuna_goabi::goabi_env_enabled());
+}
+
+/// `set_kuna_option` still carries a load-time option to the environment for
+/// a later environment-reading load, and that write cannot reach a load with
+/// explicit options.
+#[test]
+fn set_kuna_option_exports_without_reaching_explicit_loads() {
+    let _env = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
+    let go = go_image();
+    std::env::remove_var("KUNA_GOABI");
+    let mut prog = load(&go, &LoadOptions::default());
+    prog.arch_mut().set_kuna_option("goabi", "off").unwrap();
+    assert_eq!(std::env::var("KUNA_GOABI").as_deref(), Ok("off"));
+    assert!(!prog.arch().load_options().goabi);
+    assert_eq!(compiler(&load(&go, &LoadOptions::default())), "golang");
+    let mut legacy = bootstrap_from_object(go.to_str().unwrap(), "", &[specs()]).unwrap();
+    legacy.commit_pending_analysis().unwrap();
+    assert_eq!(compiler(&legacy), "gcc");
+    for name in ENV_VARS {
+        std::env::remove_var(name);
+    }
+    std::fs::remove_file(go).unwrap();
+}
+
+/// A program loaded through an entry point that takes no options reads the
+/// environment when each gate runs, as it did before `LoadOptions`: a scope
+/// bound set after the load reaches a later declaration. An explicit program
+/// loaded alongside keeps its own options.
+#[test]
+fn an_environment_program_reads_the_environment_live() {
+    let _env = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::remove_var("KUNA_SYMBOLNAMEBOUND");
+    let wire = libwire();
+    let mut legacy = bootstrap_from_object(wire.to_str().unwrap(), "", &[specs()]).unwrap();
+    legacy.commit_pending_analysis().unwrap();
+    let mut explicit = load(&wire, &LoadOptions::default());
+    std::env::set_var("KUNA_SYMBOLNAMEBOUND", "1");
+    for prog in [&mut legacy, &mut explicit] {
+        let first = prog.function_entries_executable()[0].addr.clone();
+        prog.ensure_function_symbol(first.clone()).unwrap();
+        prog.declare_function(first, Some("outer::inner::renamed"), 0)
+            .unwrap();
+    }
+    std::env::remove_var("KUNA_SYMBOLNAMEBOUND");
+    assert!(
+        !legacy.has_symbol_named("outer::inner::renamed"),
+        "the declaration read the environment's bound"
+    );
+    assert!(explicit.has_symbol_named("outer::inner::renamed"));
 }

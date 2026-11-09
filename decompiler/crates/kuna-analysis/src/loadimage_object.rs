@@ -1758,7 +1758,7 @@ fn language_id_for(
     // arch allowlist, then language detection (which honours the
     // `KUNA_SOURCELANG` force). Everything else keeps `model` untouched, and
     // the engine's default-model retry covers a spec that fails to load.
-    let model = if kuna_decomp::kuna_goabi::goabi_enabled()
+    let model = if kuna_decomp::kuna_goabi::goabi_env_enabled()
         && little
         && matches!(arch, Architecture::X86_64 | Architecture::I386 | Architecture::Aarch64)
         && crate::sourcelang::effective_compiler(file, bytes).is_golang()

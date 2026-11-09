@@ -1017,9 +1017,6 @@ decomp_command!(
                 .arch_mut()
                 .set_kuna_option(&optname, &p1)
                 .map_err(|e| IfaceError::execution(e.explain().to_string()))?;
-            // A later `load file` in this session reads a load-time option from
-            // the environment, so the console carries the choice there.
-            prog.arch().load_options().export_env(&optname);
             prog.callwide_changed();
             status.out(&format!("{res}\n"));
             return Ok(());

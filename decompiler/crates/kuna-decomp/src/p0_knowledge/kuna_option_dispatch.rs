@@ -299,12 +299,14 @@ kuna_options! { self, p1;
     "goreg" => {
         let val = on_or_off(p1)?;
         self.load_options_mut().goreg = val;
+        crate::kuna_goreg::set_goreg_env(val);
         self.go_reg = val;
         Ok(format!("Goroutine register naming turned {}", if val { "on" } else { "off" }))
     },
     "goabi" => {
         let on = crate::kuna_goabi::parse_goabi(p1).map_err(KunaError::parse)?;
         self.load_options_mut().goabi = on;
+        crate::kuna_goabi::set_goabi_env(on);
         self.analysis_goabi = on;
         Ok(format!("Golang compiler-spec selection turned {}", if on { "auto" } else { "off" }))
     },
@@ -316,6 +318,7 @@ kuna_options! { self, p1;
     "sourcelang" => {
         let forced = crate::kuna_sourcelang::parse_option_value(p1).map_err(KunaError::parse)?;
         self.load_options_mut().sourcelang = forced;
+        crate::kuna_sourcelang::set_sourcelang_env(forced);
         self.source_lang_forced = forced;
         Ok(match forced {
             Some(lang) => format!("Source language forced to {}", lang.as_str()),
@@ -1009,6 +1012,7 @@ kuna_options! { self, p1;
         self.analysis_libctypes = layout != LibcTypesLayout::Off;
         self.analysis_libctypes_glibc = layout == LibcTypesLayout::Glibc;
         self.load_options_mut().libctypes = layout;
+        crate::kuna_libctypes::set_libctypes_env_layout(layout);
         Ok(format!(
             "Named libc aggregate types turned {}",
             match layout {
@@ -1148,12 +1152,14 @@ kuna_options! { self, p1;
             .ok_or_else(|| KunaError::parse("Expected ppc32picimports off|on|abi"))?;
         self.analysis_ppc32picimports = mode;
         self.load_options_mut().ppc32picimports = mode;
+        mode.set_env();
         Ok(format!("PPC32 PIC import recovery {}", mode.as_str()))
     },
     "i386_pie_plt" => {
         let val = on_or_off(p1)?;
         self.analysis_i386_pie_plt = val;
         self.load_options_mut().i386_pie_plt = val;
+        crate::kuna_i386_pie_plt::set_i386_pie_plt_env(val);
         Ok(format!(
             "i386-PIE PLT-stub decode turned {}",
             if val { "on" } else { "off" }
@@ -1163,6 +1169,7 @@ kuna_options! { self, p1;
         let val = on_or_off(p1)?;
         self.analysis_ifuncfpret = val;
         self.load_options_mut().ifuncfpret = val;
+        crate::kuna_ifuncfpret::set_ifuncfpret_env(val);
         Ok(format!(
             "IFUNC PLT-stub naming turned {}",
             if val { "on" } else { "off" }
@@ -1172,6 +1179,7 @@ kuna_options! { self, p1;
         let val = on_or_off(p1)?;
         self.analysis_relocrebase = val;
         self.load_options_mut().relocrebase = val;
+        crate::kuna_relocrebase::set_relocrebase_env(val);
         Ok(format!(
             "relocatable-object analysis rebase turned {}",
             if val { "on" } else { "off" }
@@ -1181,6 +1189,7 @@ kuna_options! { self, p1;
         let val = on_or_off(p1)?;
         self.analysis_dynrelocs = val;
         self.load_options_mut().dynrelocs = val;
+        crate::kuna_dynrelocs::set_dynrelocs_env(val);
         Ok(format!(
             "linked-image dynamic-relocation application turned {}",
             if val { "on" } else { "off" }
@@ -1190,6 +1199,7 @@ kuna_options! { self, p1;
         let val = on_or_off(p1)?;
         self.analysis_pdatachained = val;
         self.load_options_mut().pdatachained = val;
+        crate::kuna_pdatachained::set_pdatachained_env(val);
         Ok(format!(
             "PE chained-UNWIND_INFO .pdata entry suppression turned {}",
             if val { "on" } else { "off" }
@@ -1199,6 +1209,7 @@ kuna_options! { self, p1;
         let val = on_or_off(p1)?;
         self.analysis_rexthunk = val;
         self.load_options_mut().rexthunk = val;
+        crate::kuna_rexthunk::set_rexthunk_env(val);
         Ok(format!(
             "x86-64 PE REX-prefixed import-thunk rejection turned {}",
             if val { "on" } else { "off" }
@@ -1208,6 +1219,7 @@ kuna_options! { self, p1;
         let val = on_or_off(p1)?;
         self.analysis_peordinal = val;
         self.load_options_mut().peordinal = val;
+        crate::kuna_peordinal::set_peordinal_env(val);
         Ok(format!(
             "PE import-by-ordinal naming turned {}",
             if val { "on" } else { "off" }
@@ -1217,6 +1229,7 @@ kuna_options! { self, p1;
         let val = on_or_off(p1)?;
         self.analysis_symbolnamerepair = val;
         self.load_options_mut().symbolnamerepair = val;
+        crate::kuna_symbolnamerepair::set_symbolnamerepair_env(val);
         Ok(format!(
             "degenerate-symbol-name repair turned {}",
             if val { "on" } else { "off" }
@@ -1226,6 +1239,7 @@ kuna_options! { self, p1;
         let val = on_or_off(p1)?;
         self.analysis_swiftdemangle = val;
         self.load_options_mut().swiftdemangle = val;
+        crate::kuna_swiftdemangle::set_swiftdemangle_env(val);
         Ok(format!("Swift symbol demangling turned {}", if val { "on" } else { "off" }))
     },
     "symbolnamechars" => {
@@ -1236,18 +1250,21 @@ kuna_options! { self, p1;
         })?;
         self.analysis_symbolnamechars = mode;
         self.load_options_mut().symbolnamechars = mode;
+        crate::kuna_symbolnamechars::set_symbolnamechars_env(mode);
         Ok(format!("symbol-name character sanitizing set to {}", mode.as_str()))
     },
     "symbolnamebound" => {
         let (bound, msg) = crate::kuna_symbolnamebound::parse_symbolnamebound(p1)?;
         self.analysis_symbolnamebound = bound;
         self.load_options_mut().symbolnamebound = bound;
+        crate::kuna_symbolnamebound::set_symbolnamebound_env(bound);
         Ok(msg)
     },
     "msvcfpconst" => {
         let val = on_or_off(p1)?;
         self.analysis_msvcfpconst = val;
         self.load_options_mut().msvcfpconst = val;
+        crate::kuna_msvcfpconst::set_msvcfpconst_env(val);
         Ok(format!(
             "MSVC __real@ FP-constant recovery turned {}",
             if val { "on" } else { "off" }
@@ -1276,6 +1293,7 @@ kuna_options! { self, p1;
         let val = on_or_off(p1)?;
         self.analysis_typedepth = val;
         self.load_options_mut().typedepth = val;
+        crate::kuna_typedepth::set_typedepth_env(val);
         Ok(format!(
             "Full-depth DWARF type resolution turned {}",
             if val { "on" } else { "off" }
@@ -1285,6 +1303,7 @@ kuna_options! { self, p1;
         let val = on_or_off(p1)?;
         self.analysis_dwarfstructs = val;
         self.load_options_mut().dwarfstructs = val;
+        crate::kuna_dwarfstructs::set_dwarfstructs_env(val);
         Ok(format!(
             "DWARF aggregate-layout import turned {}",
             if val { "on" } else { "off" }
@@ -1294,6 +1313,7 @@ kuna_options! { self, p1;
         let val = on_or_off(p1)?;
         self.analysis_variantnames = val;
         self.load_options_mut().variantnames = val;
+        crate::kuna_variantnames::set_variantnames_env(val);
         Ok(format!(
             "Variant discriminant-value naming turned {}",
             if val { "on" } else { "off" }
@@ -1303,6 +1323,7 @@ kuna_options! { self, p1;
         let val = on_or_off(p1)?;
         self.analysis_dwarfvariants = val;
         self.load_options_mut().dwarfvariants = val;
+        crate::kuna_dwarfvariants::set_dwarfvariants_env(val);
         Ok(format!(
             "DWARF variant-part import turned {}",
             if val { "on" } else { "off" }
@@ -1381,6 +1402,7 @@ kuna_options! { self, p1;
         let val = on_or_off(p1)?;
         self.analysis_gotypes = val;
         self.load_options_mut().gotypes = val;
+        crate::kuna_gotypes::set_gotypes_env(val);
         Ok(format!("Go runtime-type harvest turned {}", if val { "on" } else { "off" }))
     },
     "gonoreturn" => {
@@ -1391,6 +1413,10 @@ kuna_options! { self, p1;
     "relocobjects" => {
         let val = on_or_off(p1)?;
         self.load_options_mut().relocobjects = val;
+        std::env::set_var(
+            crate::options::RELOC_OBJECTS_ENV,
+            if val { "1" } else { "0" },
+        );
         Ok(format!(
             "ET_REL relocatable-object loading turned {}",
             if val { "on" } else { "off" }
