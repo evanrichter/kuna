@@ -549,3 +549,51 @@ fn a_user_comment_tag_reaches_its_token() {
     assert_eq!(kind_of("untagged"), Some(CommentKind::User(0xff)));
     assert_eq!(kind_of("/* tagged"), Some(CommentKind::User(7)));
 }
+
+/// (kuna) A control-flow keyword's token names the branch op its block ends
+/// with, as Ghidra's `condBlock->lastOp()` markup does, and an integer
+/// literal's token names the op that reads it, so a front end can link either
+/// to its instruction.  The plain C is unchanged.
+#[test]
+fn keywords_and_literals_name_their_ops() {
+    use kuna_decomp::decompile_drive::print_c_with_srcmap;
+    use kuna_num::opcodes::OpCode;
+    use kuna_decomp::prettyprint::TokenKind;
+
+    let mut keywords = 0;
+    let mut literals = 0;
+    for stem in ["forloop1", "loopcomment", "elseif", "boolless"] {
+        let dt = parse_datatest(stem).unwrap_or_else(|e| panic!("parse {stem}: {e}"));
+        let mut xarch = bootstrap(&dt).unwrap_or_else(|e| panic!("bootstrap {stem}: {e}"));
+        let arch = xarch.sleigh_mut().base_mut().expect("Architecture base");
+        for sym in &dt.symbols {
+            let space = Rc::clone(arch.manage().get_space_by_name(&sym.space).expect("code space"));
+            let entry = Address::new(space, sym.offset);
+            let Ok(fd) = decompile_func(arch, &sym.name, entry, 0) else { continue };
+            let plain = print_c(arch, &fd);
+            let (code, _, tokens) = print_c_with_srcmap(arch, &fd);
+            assert_eq!(code, plain);
+            let op_of = |time: u64| {
+                fd.obank()
+                    .iter_alive()
+                    .filter_map(|op| fd.obank().get(op))
+                    .find(|op| op.get_time() as u64 == time)
+                    .map(|op| op.code())
+            };
+            for token in &tokens {
+                if matches!(token.text.as_str(), "if" | "while" | "for") && token.kind == TokenKind::Op {
+                    let op = token.opref.and_then(op_of);
+                    assert_eq!(op, Some(OpCode::CPUI_CBRANCH), "{stem}: `{}` on line {}\n{code}", token.text, token.line);
+                    assert!(token.seqnum.is_some(), "{stem}: `{}` has no address", token.text);
+                    keywords += 1;
+                }
+                let integer = token.text.trim_start_matches('-').starts_with(|c: char| c.is_ascii_digit());
+                if token.kind == TokenKind::Value && integer {
+                    assert!(token.opref.is_some(), "{stem}: literal `{}` names no op\n{code}", token.text);
+                    literals += 1;
+                }
+            }
+        }
+    }
+    assert!(keywords >= 4 && literals >= 4, "{keywords} keywords, {literals} literals");
+}
