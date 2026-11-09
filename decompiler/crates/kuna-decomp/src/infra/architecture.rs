@@ -3272,6 +3272,17 @@ impl Architecture {
         }
     }
 
+    /// (kuna) Take back the prototype parked on the FunctionSymbol at `addr`, in
+    /// whatever scope it lives: the undo of
+    /// [`Self::set_function_prototype_pieces_at`]; the program then decompiles as
+    /// it did before the park.
+    /// A silent no-op when no FunctionSymbol starts at `addr`.
+    pub fn clear_function_prototype_pieces_at(&mut self, addr: &Address) {
+        if let Some((sid, _)) = self.symboltab.find_function_across_scopes(addr) {
+            self.symboltab.clear_function_proto_pieces(sid);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Funcdata construction (the W3 boot boundary)
     // -----------------------------------------------------------------------

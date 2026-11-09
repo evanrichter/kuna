@@ -2893,6 +2893,17 @@ impl Database {
         }
     }
 
+    /// (kuna) Take back the prototype pieces parked on FunctionSymbol `sid`, the
+    /// undo of [`Database::set_function_proto_pieces`]: a caller's
+    /// `ActionDefaultParams` then derives the callee's prototype as if none had
+    /// been parked. No-op on a non-Function symbol.
+    pub fn clear_function_proto_pieces(&mut self, sid: SymbolId) {
+        self.kuna_gen += 1;
+        if let SymbolKind::Function { proto_pieces, .. } = &mut self.symbols[sid].kind {
+            *proto_pieces = None;
+        }
+    }
+
     /// The prototype pieces parked on FunctionSymbol `sid`, or `None` when it
     /// carries none or is not a function.
     pub fn function_proto_pieces_of(&self, sid: SymbolId) -> Option<&crate::fspec::PrototypePieces> {
