@@ -25,6 +25,8 @@ mod verify_fieldtokens;
 
 #[path = "verify_inputtypes.rs"]
 mod verify_inputtypes;
+#[path = "verify_protoclear.rs"]
+mod verify_protoclear;
 #[path = "verify_localstructs.rs"]
 mod verify_localstructs;
 #[path = "verify_language_database.rs"]
