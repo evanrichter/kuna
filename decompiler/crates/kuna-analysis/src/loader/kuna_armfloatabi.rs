@@ -11,6 +11,23 @@ const TAG_ARM_ISA_USE: u32 = 8;
 /// only Thumb, and `Tag_ARM_ISA_use` 0 forbids A32 outright. Only an explicit
 /// tag counts; an image without attributes may hold either.
 pub fn thumb_only(file: &object::File<'_>) -> bool {
+    any_file_tag(file, |tag| {
+        tag(TAG_CPU_ARCH_PROFILE) == Some(u32::from(b'M')) || tag(TAG_ARM_ISA_USE) == Some(0)
+    })
+}
+
+/// Whether the build attributes name an M-profile (microcontroller) CPU, as
+/// Cortex-M images do. Only an explicit `Tag_CPU_arch_profile` counts.
+pub fn m_profile(file: &object::File<'_>) -> bool {
+    any_file_tag(file, |tag| tag(TAG_CPU_ARCH_PROFILE) == Some(u32::from(b'M')))
+}
+
+/// Whether some `.ARM.attributes` section of an ARM ELF satisfies `test`, given
+/// a reader of that section's explicit file-scope tags.
+fn any_file_tag(
+    file: &object::File<'_>,
+    test: impl Fn(&dyn Fn(u32) -> Option<u32>) -> bool,
+) -> bool {
     if file.format() != object::BinaryFormat::Elf
         || file.architecture() != object::Architecture::Arm
     {
@@ -23,8 +40,7 @@ pub fn thumb_only(file: &object::File<'_>) -> bool {
                 return false;
             };
             let little = file.is_little_endian();
-            let tag = |wanted| file_attribute(data, little, wanted, |v| v, None).flatten();
-            tag(TAG_CPU_ARCH_PROFILE) == Some(u32::from(b'M')) || tag(TAG_ARM_ISA_USE) == Some(0)
+            test(&|wanted| file_attribute(data, little, wanted, |v| v, None).flatten())
         })
 }
 
@@ -454,6 +470,23 @@ mod tests {
             let bytes = arm_object(attributes.clone());
             let file = object::File::parse(&*bytes).unwrap();
             assert_eq!(thumb_only(&file), expected, "{attributes:?}");
+        }
+    }
+
+    #[test]
+    fn only_an_explicit_m_profile_is_m_profile() {
+        let cases = [
+            (None, false),
+            (Some(tagged(&[6, 13, 7, b'M', 9, 2], true)), true),
+            (Some(tagged(&[6, 10, 7, b'A', 8, 1, 9, 2], true)), false),
+            (Some(tagged(&[7, b'R'], true)), false),
+            (Some(tagged(&[8, 0], true)), false),
+            (Some(tagged(&[7, b'M', 7, b'A'], true)), false),
+        ];
+        for (attributes, expected) in cases {
+            let bytes = arm_object(attributes.clone());
+            let file = object::File::parse(&*bytes).unwrap();
+            assert_eq!(m_profile(&file), expected, "{attributes:?}");
         }
     }
 
