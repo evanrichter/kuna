@@ -27,6 +27,7 @@ use kuna_num::opcodes::OpCode;
 use kuna_num::pcoderaw::VarnodeData;
 
 use crate::context::FixedHandle;
+use crate::kuna_operandpieces::{print_body_pieces, StructuredAssembly};
 use crate::globalcontext::{ContextCache, ContextDatabase};
 use crate::loadimage::{ImageBytes, LoadImage};
 use crate::semantics::{ConstructTpl, OpTpl, PcodeBuilder, VField, VarnodeTpl};
@@ -2446,6 +2447,28 @@ impl Sleigh {
         result
     }
 
+    /// (kuna) Disassemble with typed operand pieces. The mnemonic and body are
+    /// byte-identical to [`Self::print_assembly_into`]; when the operand
+    /// handles cannot be resolved, the body comes back as one text piece.
+    pub fn print_assembly_structured(&self, baseaddr: &Address) -> KunaResult<StructuredAssembly> {
+        let resolved = (|| {
+            let pos = self.obtain_context(baseaddr, ParseState::Pcode)?;
+            let table = &self.base.symtab;
+            let mut walker = ParserWalker::new(&pos, table, self);
+            walker.base_state();
+            let ct = table.get_constructor(walker.get_constructor_inner()?)?;
+            let mut mnemonic = String::new();
+            ct.print_mnemonic(&mut mnemonic, &mut walker, table)?;
+            let (body, pieces) = print_body_pieces(ct, &mut walker, table)?;
+            Ok(StructuredAssembly { length: pos.get_length(), mnemonic, body, pieces })
+        })();
+        resolved.or_else(|_: KunaError| {
+            let (mut mnemonic, mut body) = (String::new(), String::new());
+            let length = self.print_assembly_into(baseaddr, &mut mnemonic, &mut body)?;
+            Ok(StructuredAssembly::text_only(length, mnemonic, body))
+        })
+    }
+
     fn render_assembly(
         &self,
         pos: &ParserContext,
@@ -2767,5 +2790,9 @@ impl Translate for Sleigh {
         body: &mut String,
     ) -> KunaResult<i32> {
         Sleigh::print_assembly_into(self, baseaddr, mnemonic, body)
+    }
+
+    fn print_assembly_structured(&self, baseaddr: &Address) -> KunaResult<StructuredAssembly> {
+        Sleigh::print_assembly_structured(self, baseaddr)
     }
 }

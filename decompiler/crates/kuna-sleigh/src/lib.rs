@@ -14,6 +14,7 @@ pub mod semantics;
 pub mod pcodecompile;
 pub mod pcodeparse;
 pub mod sleigh;
+pub mod kuna_operandpieces;
 mod kuna_instructionbytes;
 mod kuna_handleview;
 mod kuna_expressionplan;
