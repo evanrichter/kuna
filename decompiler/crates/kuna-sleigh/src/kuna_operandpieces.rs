@@ -86,11 +86,15 @@ pub enum PieceKind {
     Constant { value: i64 },
     /// A memory address: a constant the operand dereferences at a fixed
     /// location, a value computed from the instruction's own address, or a
-    /// varnode in a memory space. `code` marks a flow target.
+    /// varnode in a memory space. `code` marks a flow target. `deref` marks an
+    /// operand that reads or writes the memory at the address (`[0x3fc8]` in a
+    /// load), as against one that uses the address itself (a LEA or ADR value,
+    /// a branch target).
     Address {
         space: String,
         offset: u64,
         code: bool,
+        deref: bool,
     },
 }
 
@@ -238,6 +242,7 @@ impl<'t> PiecePrinter<'t> {
                     space: space.get_name().to_string(),
                     offset: space.wrap_offset(value),
                     code,
+                    deref: false,
                 });
             }
         }
@@ -247,7 +252,9 @@ impl<'t> PiecePrinter<'t> {
     }
 
     /// The innermost memory-space handle around the leaf, when it is a fixed
-    /// location at `value`: the operand dereferences the constant.
+    /// location at `value`: the operand dereferences the constant. A flow
+    /// target's handle names the place to go, not memory to read, so it is no
+    /// dereference.
     fn dereferenced_address(&self, value: u64, code: bool) -> Option<PieceKind> {
         for frame in self.frames.iter().rev() {
             let Some(space) = frame.hand.space.as_deref() else {
@@ -268,6 +275,7 @@ impl<'t> PiecePrinter<'t> {
                     space: space.get_name().to_string(),
                     offset,
                     code,
+                    deref: !code,
                 });
             }
             return None;
@@ -376,10 +384,12 @@ fn varnode_kind(hand: &FixedHandle, printed: &str, code: bool) -> PieceKind {
                 size: hand.size,
             }
         }
+        // A memory varnode is the operand's storage: it reads or writes there.
         Some(space) if hand.offset_space.is_none() && is_memory(space) => PieceKind::Address {
             space: space.get_name().to_string(),
             offset: hand.offset_offset,
             code,
+            deref: !code,
         },
         _ => PieceKind::Text,
     }
