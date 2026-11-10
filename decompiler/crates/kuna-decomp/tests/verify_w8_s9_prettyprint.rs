@@ -56,6 +56,7 @@ const NONE: MarkupRef = MarkupRef {
     type_id: None,
     type_name: None,
     field: None,
+    high: None,
 };
 
 /// ADV1 — a single content token wider than the entire line.

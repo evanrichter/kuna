@@ -23,6 +23,9 @@ mod setup_commands;
 #[path = "verify_fieldtokens.rs"]
 mod verify_fieldtokens;
 
+#[path = "verify_declhighs.rs"]
+mod verify_declhighs;
+
 #[path = "verify_inputtypes.rs"]
 mod verify_inputtypes;
 #[path = "verify_protoclear.rs"]

@@ -21,6 +21,7 @@ fn raw(line: usize, col: usize, text: &str, kind: TokenKind) -> EmitToken {
         seqnum: None,
         comment: None,
         field: None,
+        high: None,
     }
 }
 

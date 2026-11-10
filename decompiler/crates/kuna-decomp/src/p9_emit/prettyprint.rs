@@ -233,6 +233,10 @@ pub struct MarkupRef {
     /// field's byte offset.  Captured into [`EmitToken::field`]; the packed
     /// encoding does not write it.
     pub field: Option<(String, int4)>,
+    /// (kuna) The HighVariable a local variable declaration declares.  Set
+    /// on a declaration's markup only and captured into [`EmitToken::high`];
+    /// the packed encoding does not write it.
+    pub high: Option<crate::context::HighVariableId>,
 }
 
 /// One source-line association captured while [`EmitMarkup`] serializes a
@@ -355,6 +359,10 @@ pub struct EmitToken {
     /// byte offset within it; `None` for a bit field or a name with no
     /// backing field.
     pub field: Option<(String, int4)>,
+    /// The HighVariable a local declaration's name token declares, valid in
+    /// the `Funcdata` the tokens were printed from; `None` on every other
+    /// token, so a use of the variable in the body carries none.
+    pub high: Option<crate::context::HighVariableId>,
 }
 
 /// The column model of [`EmitNoMarkup`] replayed beside [`EmitMarkup`]: a line
@@ -429,6 +437,9 @@ impl TokenCapture {
                     field: markup
                         .filter(|_| kind == TokenKind::Field)
                         .and_then(|m| m.field.clone()),
+                    high: markup
+                        .filter(|_| kind == TokenKind::Variable)
+                        .and_then(|m| m.high),
                 });
             }
             self.col += seg.encode_utf16().count();
@@ -2058,6 +2069,7 @@ impl TokenSplit {
         self.hl = h;
         self.markup.varref = markup.varref;
         self.markup.opref = markup.opref;
+        self.markup.high = markup.high;
     }
     /// C++ `tagOp(name,h,o)`.
     pub fn tag_op(&mut self, name: &str, h: SyntaxHighlight, markup: &MarkupRef) {

@@ -3791,6 +3791,9 @@ impl PrintC {
                         .and_then(|h| fd.kuna_high_symbol_wire_id(h))
                 })
                 .or(decl_rep_index);
+            // (kuna) Token capture names the declared high, so a caller holding
+            // `fd` can tell which variable each declaration declares.
+            markup.high = Some(*high);
             let (mut decl_type, mut decl_back, mut array_count, comment, mut declared) =
                 self.rendered_local_decl(fd, arch, *high);
             let comment = source_comments.remove(high).or(comment);

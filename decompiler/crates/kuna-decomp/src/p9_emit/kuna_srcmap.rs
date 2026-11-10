@@ -86,6 +86,7 @@ pub fn apply_cookie_rewrites(tokens: &mut Vec<EmitToken>, rewrites: &[CookieRewr
                 seqnum: None,
                 comment: None,
                 field: None,
+                high: None,
                 ..keyword.clone()
             });
         tokens.retain(|t| t.line != rw.assignment_line && t.line != rw.return_line);
