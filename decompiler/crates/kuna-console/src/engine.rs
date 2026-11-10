@@ -47,7 +47,7 @@ use kuna_decomp::options::register_option_elements;
 use kuna_decomp::raw_arch::RawBinaryArchitectureCapability;
 use kuna_decomp::kuna_memoryspecs::IntoSpecRoot;
 use kuna_decomp::kuna_loadoptions::LoadOptions;
-pub use kuna_decomp::kuna_loadmap::{LoadEntry, LoadMap, LoadRegion, RegionBytes};
+pub use kuna_decomp::kuna_loadmap::{LoadEntry, LoadMap, LoadRegion, RegionBytes, VectorTable};
 use kuna_analysis::kuna_imageview::MappedView;
 use kuna_sleigh::kuna_mappedimage::{MappedBytes, MappedLoadImage};
 use kuna_decomp::sleigh_arch::{register_sleigh_arch_ids, LanguageDatabase, SleighArchitecture};
@@ -4295,10 +4295,11 @@ fn bootstrap_memory_map(
     }
     let plan = crate::kuna_memorymap::plan(
         map,
-        file.len() as u64,
+        &file,
         word_size,
         code_space.get_highest(),
         arm32,
+        code_space.is_big_endian(),
     )
     .map_err(|e| KunaError::lowlevel(format!("memory map: {e}")))?;
     let bytes = MappedBytes::new(plan.regions.clone(), file)

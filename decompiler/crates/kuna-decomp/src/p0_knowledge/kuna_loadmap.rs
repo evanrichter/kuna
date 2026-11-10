@@ -15,6 +15,8 @@ pub struct LoadMap {
     pub regions: Vec<LoadRegion>,
     /// Addresses where code starts, each inside an executable region.
     pub entries: Vec<LoadEntry>,
+    /// Cortex-M vector tables, whose handlers seed discovery as entries do.
+    pub vector_tables: Vec<VectorTable>,
 }
 
 /// One named address range of a [`LoadMap`].
@@ -59,4 +61,21 @@ pub struct LoadEntry {
     pub address: u64,
     /// The function's name; `None` takes Kuna's generated name.
     pub name: Option<String>,
+}
+
+/// A Cortex-M vector table: the initial stack pointer, then one handler
+/// pointer per slot. Slot 1's handler takes the CMSIS name `Reset_Handler`;
+/// another system exception's handler takes its CMSIS name, such as
+/// `NMI_Handler`, only when no other slot of any table points at it. An
+/// entry's name beats either, and the first table in the map keeps a name two
+/// tables would both give.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VectorTable {
+    /// The table's address, in a file-backed region and aligned to 4.
+    pub address: u64,
+    /// The number of slots, counting the stack pointer's, from 2 to 512.
+    /// `None` ends the table at the first word that is neither zero nor a
+    /// Thumb pointer into an executable region, or where the lowest handler
+    /// starts.
+    pub slots: Option<u32>,
 }
