@@ -1,8 +1,8 @@
 //! `ConsoleProgram::decompile_with_input_types` retypes a parameter found by its
 //! storage at entry, keeps the other parameters, reports one outcome per input,
 //! and leaves nothing behind for the next decompile.
-//! `decompile_with_input_and_local_types` also retypes locals by the names the
-//! first pass printed.
+//! `decompile_with_input_and_local_types` also retypes locals by the names a
+//! pass with the parameter types printed.
 //!
 //! The fixture `libwire_x86_64.so` is a `-O1` shared library whose functions
 //! take a `struct Request *` in `RDI` (see its `.c`); `libwire_i386.so` is its
@@ -213,4 +213,46 @@ fn a_local_of_another_width_a_missing_name_and_a_repeat_are_rejected() {
     assert!(matches!(&outcomes[3], InputTypeOutcome::Rejected(reason) if reason.contains("v1")), "{outcomes:?}");
     let (after, _) = decompile(&mut prog, "checksum", &[]);
     assert_eq!(after, untyped, "the retype changed the next untyped decompile");
+}
+
+#[test]
+fn locals_are_named_in_a_pass_that_has_the_parameter_types() {
+    let mut prog = libwire();
+    let (typed, _) = decompile(&mut prog, "transmit", &[("RDI", "Request *")]);
+    assert!(signature(&typed, "transmit").contains("Request *a0"), "in:\n{typed}");
+    let entry = prog.find_entry_by_name("transmit").expect("function in fixture");
+    let inputs = [(register(&prog, "RDI"), ctype(&prog, "Request *"))];
+    let (uint4, int4) = (ctype(&prog, "uint4"), ctype(&prog, "int4"));
+
+    // A local whose type is refused leaves the C the parameter alone gives.
+    let mut seen = String::new();
+    let mut name_locals = |arch: &mut kuna_decomp::architecture::Architecture, fd: &kuna_decomp::funcdata::Funcdata| {
+        seen = print_c(arch, fd);
+        vec![("v99".to_string(), Rc::clone(&uint4))]
+    };
+    let (fd, outcomes, locals) =
+        prog.decompile_with_input_and_local_types(&entry, &inputs, &mut name_locals).expect("decompile succeeds");
+    let code = print_c(prog.arch_mut(), &fd);
+    assert_eq!(outcomes, [InputTypeOutcome::Applied]);
+    assert!(matches!(&locals[..], [InputTypeOutcome::Rejected(_)]), "{locals:?}");
+    assert_eq!(seen, typed, "the locals were named in C without the parameter's type");
+    assert_eq!(code, typed);
+
+    // A local retyped beside the parameter keeps both.
+    let local = typed
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("uint4 ").and_then(|rest| rest.split(';').next()))
+        .unwrap_or_else(|| panic!("no uint4 local in:\n{typed}"))
+        .to_string();
+    let mut name_locals = |arch: &mut kuna_decomp::architecture::Architecture, fd: &kuna_decomp::funcdata::Funcdata| {
+        seen = print_c(arch, fd);
+        vec![(local.clone(), Rc::clone(&int4))]
+    };
+    let (fd, outcomes, locals) =
+        prog.decompile_with_input_and_local_types(&entry, &inputs, &mut name_locals).expect("decompile succeeds");
+    let code = print_c(prog.arch_mut(), &fd);
+    assert_eq!(seen, typed);
+    assert_eq!((outcomes, locals), (vec![InputTypeOutcome::Applied], vec![InputTypeOutcome::Applied]), "in:\n{code}");
+    assert!(signature(&code, "transmit").contains("Request *a0"), "in:\n{code}");
+    assert!(code.contains(&format!("int4 {local};")), "in:\n{code}");
 }

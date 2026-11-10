@@ -12,18 +12,21 @@
 //! printed before.
 //!
 //! [`ConsoleProgram::decompile_with_input_and_local_types`] also retypes
-//! locals. A caller that keys locals by facts of its own reads the first
-//! pass's function, maps its keys to the names that pass printed, and the
-//! retype goes through the `type` directive's path for each name.
+//! locals. A caller that keys locals by facts of its own reads a pass's
+//! function, maps its keys to the names that pass printed, and the retype goes
+//! through the `type` directive's path for each name. That pass already has
+//! the parameter types, since a parameter's type can re-lay the locals; with
+//! both kinds of input applied, this costs one pass more.
 
 use std::rc::Rc;
 
 use kuna_base::address::Address;
 use kuna_base::error::KunaResult;
-use kuna_base::types::uint4;
+use kuna_base::types::{int4, uint4};
 use kuna_decomp::architecture::Architecture;
 use kuna_decomp::database::symbol_category;
 use kuna_decomp::dtype::Datatype;
+use kuna_decomp::fspec::ParameterPieces;
 use kuna_decomp::funcdata::Funcdata;
 
 use crate::decompile_step::{decompile_one, DecompileSeed};
@@ -63,16 +66,21 @@ impl ConsoleProgram {
     }
 
     /// [`ConsoleProgram::decompile_with_input_types`] that also retypes locals.
-    /// After the first pass, `locals` reads that pass's function (it may print
-    /// it with the architecture it is given) and names each local to retype as
-    /// the pass printed it, with its type. Each is applied as the `type`
-    /// directive applies `type <name> <decl>` on that output, so a register
-    /// local takes a type of its own width, and a structure, union or array may
-    /// grow a stack local over the frame, over the locals beside it. The second
-    /// pass always runs, and the function comes back with the inputs' outcomes
+    /// `locals` reads a pass's function (it may print it with the architecture
+    /// it is given) and names each local to retype as the pass printed it, with
+    /// its type. That pass has the applied inputs' parameter types, so it names
+    /// the locals the returned function has where no local is retyped. Each is
+    /// applied as the `type` directive applies `type <name> <decl>` on that
+    /// output, so a register local takes a type of its own width, and a
+    /// structure, union or array may grow a stack local over the frame, over
+    /// the locals beside it. The function comes back with the inputs' outcomes
     /// and one outcome per local `locals` named, in its order. A local is
     /// rejected for the reason the directive would give, or when `locals`
     /// names it twice.
+    ///
+    /// Without an input applied, `locals` reads the first pass, and a second
+    /// runs only if a local is retyped. With one applied, `locals` reads the
+    /// second pass, and a third runs only if a local is retyped.
     pub fn decompile_with_input_and_local_types(
         &mut self,
         entry: &FunctionEntry,
@@ -121,7 +129,17 @@ impl ConsoleProgram {
             });
         }
         let mut local_outcomes = Vec::new();
+        let mut params = Vec::new();
+        let mut relaid = false;
         if let Some(locals) = locals {
+            // A parameter's type can re-lay the locals, so `locals` reads a pass
+            // that already has the parameter types: the C the last pass prints
+            // where no local is retyped.
+            if outcomes.contains(&InputTypeOutcome::Applied) {
+                params = crate::kuna_paramasserts::carried(&fd, &[]);
+                fd = self.decompile_carried(entry, declared, &flow, fd, &params, true)?;
+                relaid = true;
+            }
             let named = locals(self.arch_mut(), &fd);
             let maxduplicates = if self.arch().dynamic_hash_maxdup_high { 16 } else { 8 };
             for (i, (name, ct)) in named.iter().enumerate() {
@@ -137,18 +155,46 @@ impl ConsoleProgram {
                 });
             }
         }
-        if !outcomes.contains(&InputTypeOutcome::Applied) && !local_outcomes.contains(&InputTypeOutcome::Applied) {
+        let retyped_locals = local_outcomes.contains(&InputTypeOutcome::Applied);
+        if !outcomes.contains(&InputTypeOutcome::Applied) && !retyped_locals {
             return Ok((fd, outcomes, local_outcomes));
         }
+        if !relaid || retyped_locals {
+            let params = crate::kuna_paramasserts::carried(&fd, &params);
+            fd = self.decompile_carried(entry, declared, &flow, fd, &params, false)?;
+        }
 
+        for ((storage, ct), outcome) in inputs.iter().zip(outcomes.iter_mut()) {
+            if *outcome == InputTypeOutcome::Applied && !has_parameter(&fd, storage, ct) {
+                *outcome = InputTypeOutcome::Rejected(format!(
+                    "The decompile kept no parameter of this type in {}",
+                    storage_name(self.arch(), storage, ct)
+                ));
+            }
+        }
+        Ok((fd, outcomes, local_outcomes))
+    }
+
+    /// Decompile `entry` again with what the directives applied to `fd` (the
+    /// pass before) carried across, and `params` as its parameters. With
+    /// `record`, the pass records its names, so a further pass may follow.
+    fn decompile_carried(
+        &mut self,
+        entry: &FunctionEntry,
+        declared: int4,
+        flow: &[(Address, uint4)],
+        fd: Funcdata,
+        params: &[(int4, String, ParameterPieces)],
+        record: bool,
+    ) -> KunaResult<Funcdata> {
         let carried = crate::assertions::carried_symbols(&fd);
         let carried_usepoint = crate::assertions::carried_usepoint_symbols(&fd);
         let carried_dynamic = crate::assertions::carried_dynamic_symbols(&fd);
         let carried_objects = kuna_decomp::kuna_stackobjectasserts::specs(&fd).to_vec();
-        let carried_params = crate::kuna_paramasserts::carried(&fd, &[]);
         self.arch_mut().kuna_prior_names = kuna_decomp::kuna_stablenames::carry(&fd);
+        self.arch_mut().kuna_record_names = record;
         drop(fd);
-        let second = decompile_one(
+        let next = decompile_one(
             self.arch_mut(),
             &entry.name,
             entry.addr.clone(),
@@ -160,24 +206,15 @@ impl ConsoleProgram {
                 dynamic_symbols: &carried_dynamic,
                 object_assertions: &carried_objects,
                 pending_proto: None,
-                flow_overrides: &flow,
-                mapped_params: &carried_params,
+                flow_overrides: flow,
+                mapped_params: params,
             },
             &[],
         )
         .result;
         self.arch_mut().kuna_prior_names = Default::default();
-        let fd = second?;
-
-        for ((storage, ct), outcome) in inputs.iter().zip(outcomes.iter_mut()) {
-            if *outcome == InputTypeOutcome::Applied && !has_parameter(&fd, storage, ct) {
-                *outcome = InputTypeOutcome::Rejected(format!(
-                    "The decompile kept no parameter of this type in {}",
-                    storage_name(self.arch(), storage, ct)
-                ));
-            }
-        }
-        Ok((fd, outcomes, local_outcomes))
+        self.arch_mut().kuna_record_names = false;
+        next
     }
 
     /// The `CALL_RETURN` flow overrides the whole-binary loop seeds at the
