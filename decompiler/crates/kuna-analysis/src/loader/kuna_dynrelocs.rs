@@ -22,7 +22,9 @@
 //!    this same image**. An *undefined* symbol is an import: there is nothing to
 //!    write, the run-time value comes from another object, and the existing
 //!    PLT/import naming ([`crate::loader::elf_plt`]) already covers the call. It
-//!    is skipped, so that path is untouched.
+//!    is skipped, so that path is untouched. An `STT_GNU_IFUNC` symbol is
+//!    skipped too: its value is the resolver, and the loader stores what the
+//!    resolver returns.
 //! 2. **The constant slots.** Those same written slots, intersected with the
 //!    `PT_GNU_RELRO` segment. `.got` is `SHF_WRITE`, so nothing downstream would
 //!    trust its contents — but `PT_GNU_RELRO` is exactly the linker's statement
@@ -69,7 +71,7 @@
 //! skipped.
 
 use object::read::{Object, ObjectSymbol, ObjectSymbolTable};
-use object::{RelocationFlags, RelocationTarget};
+use object::{RelocationFlags, RelocationTarget, SymbolFlags};
 
 /// One relocation whose run-time value is statically knowable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,10 +245,12 @@ struct ElfTable {
     width: usize,
     le: bool,
     mask: u64,
-    /// `.dynsym` by index — the index a dynamic relocation's `r_sym` names. The
-    /// generic `symbol_by_index` reads `.symtab`, which is a different table (and
-    /// is absent from a stripped image), so the map is built here.
-    dynsyms: std::collections::HashMap<usize, (u64, bool)>,
+    /// The address the loader binds to each `.dynsym` entry, by the index a
+    /// dynamic relocation's `r_sym` names; `None` where this image does not
+    /// determine it (an import, an `STT_GNU_IFUNC`). The generic
+    /// `symbol_by_index` reads `.symtab`, which is a different table (and is
+    /// absent from a stripped image), so the map is built here.
+    dynsyms: std::collections::BTreeMap<usize, Option<u64>>,
 }
 
 /// What one dynamic relocation stores, as far as this image alone says.
@@ -278,10 +282,12 @@ impl ElfTable {
         file.dynamic_relocations()?;
         let width: usize = if file.is_64() { 8 } else { 4 };
         let triple = reloc_triple(file.architecture());
-        let mut dynsyms = std::collections::HashMap::new();
+        let mut dynsyms = std::collections::BTreeMap::new();
         if triple.is_some() {
             for s in file.dynamic_symbols() {
-                dynsyms.insert(s.index().0, (s.address(), s.is_undefined()));
+                let ifunc =
+                    matches!(s.flags(), SymbolFlags::Elf { st_info, .. } if st_info & 0xf == object::elf::STT_GNU_IFUNC);
+                dynsyms.insert(s.index().0, (!s.is_undefined() && !ifunc).then_some(s.address()));
             }
         }
         Some(ElfTable {
@@ -339,7 +345,7 @@ impl ElfTable {
         // Nothing to write, and the PLT/import naming already covers the call —
         // the slot stays exactly as the linker left it.
         let value = match (symbol.and_then(|idx| self.dynsyms.get(&idx.0)), a) {
-            (Some(&(addr, false)), Some(a)) => Some(addr.wrapping_add(a) & self.mask),
+            (Some(&Some(addr)), Some(a)) => Some(addr.wrapping_add(a) & self.mask),
             _ => None,
         };
         ElfFixup { kind: FixupKind::Bind, symbol, addend: a.map(|a| a as i64), value }
