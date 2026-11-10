@@ -52,7 +52,7 @@ pub(crate) mod kuna_decodereuse;
 mod kuna_pcform;
 mod kuna_picbase;
 mod kuna_picpool;
-mod kuna_poolref;
+pub(crate) mod kuna_poolref;
 mod kuna_regcarry;
 mod kuna_ppclocalentry;
 mod kuna_switchtable;
@@ -419,7 +419,7 @@ impl Listing {
                 )
             })
             .flatten();
-        let a32_pool = kuna_a32switch::applies(file, arch).then(|| kuna_poolref::PoolImage::new(file)).flatten();
+        let a32_pool = kuna_a32switch::applies(&crate::kuna_imageview::ObjectView::new(file), arch).then(|| kuna_poolref::PoolImage::new(file)).flatten();
         let a32_tables = a32_pool.as_ref().map(|pool| kuna_a32switch::A32Tables::new(arch, pool));
         let x86_tables = arch
             .analysis_x86listingswitch

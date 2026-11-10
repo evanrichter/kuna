@@ -132,6 +132,14 @@ impl MappedBytes {
         &self.regions
     }
 
+    /// The file bytes `region` serves, or `None` for a zero-filled region or
+    /// one this map does not hold.
+    pub fn region_bytes(&self, region: &MappedRegion) -> Option<&[u8]> {
+        let offset = usize::try_from(region.file_offset?).ok()?;
+        let size = usize::try_from(region.size).ok()?;
+        self.file.get(offset..offset.checked_add(size)?)
+    }
+
     fn region_at(&self, addr: u64) -> Option<&MappedRegion> {
         let index = self.regions.partition_point(|region| region.end() <= addr);
         self.regions
@@ -210,6 +218,11 @@ impl MappedLoadImage {
     /// The regions, sorted by address.
     pub fn regions(&self) -> &[MappedRegion] {
         self.bytes.regions()
+    }
+
+    /// The bytes the image serves, shared with every reader of the image.
+    pub fn bytes(&self) -> &Arc<MappedBytes> {
+        &self.bytes
     }
 
     fn space(&self) -> &Rc<AddrSpace> {
@@ -328,6 +341,14 @@ mod tests {
         let mut tail = [0xffu8; 4];
         assert_eq!(bytes.fill_span(&mut tail, 0x1002), 0);
         assert_eq!(tail, [4, 5, 0, 0]);
+    }
+
+    #[test]
+    fn region_bytes_are_the_file_slice_or_none_for_zero_fill() {
+        let bytes = flash_and_ram();
+        let [flash, ram] = bytes.regions() else { panic!("two regions") };
+        assert_eq!(bytes.region_bytes(flash), Some(&[2u8, 3, 4, 5][..]));
+        assert_eq!(bytes.region_bytes(ram), None);
     }
 
     #[test]

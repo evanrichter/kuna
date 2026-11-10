@@ -15,6 +15,7 @@ pub(crate) const MAX_REGIONS: usize = 64;
 #[derive(Debug)]
 pub(crate) struct MapPlan {
     pub(crate) regions: Vec<MappedRegion>,
+    pub(crate) region_names: Vec<String>,
     pub(crate) executable: Vec<(u64, u64)>,
     pub(crate) volatile: Vec<(u64, u64)>,
     pub(crate) entries: Vec<u64>,
@@ -179,6 +180,7 @@ pub(crate) fn plan(
     }
 
     Ok(MapPlan {
+        region_names: regions.iter().map(|(name, _)| name.to_string()).collect(),
         regions: regions.into_iter().map(|(_, region)| region).collect(),
         executable,
         volatile,

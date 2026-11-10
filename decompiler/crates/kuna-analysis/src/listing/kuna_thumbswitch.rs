@@ -85,6 +85,23 @@ impl<'a> HalfwordTables<'a> {
         Some(HalfwordTables { pool: PoolImage::new(file)?, data_space, max_entries })
     }
 
+    /// [`Self::new`] over any image; a view with no object file is never
+    /// relocatable.
+    pub(crate) fn new_in(
+        view: &'a dyn crate::kuna_imageview::ImageView,
+        data_space: Option<Rc<AddrSpace>>,
+        max_entries: usize,
+    ) -> Option<Self> {
+        if let Some(file) = view.object() {
+            return Self::new(file, data_space, max_entries);
+        }
+        if view.architecture() != object::Architecture::Arm {
+            return None;
+        }
+        let max_entries = if max_entries == 0 { DEFAULT_MAX_ENTRIES } else { max_entries };
+        Some(HalfwordTables { pool: PoolImage::new_in(view)?, data_space, max_entries })
+    }
+
     /// The case bodies of the computed jump at `from` when it is a PC-relative
     /// `tbb`/`tbh` behind a range check, and the case count that check states;
     /// nothing for every other computed jump. `decoded` answers which addresses

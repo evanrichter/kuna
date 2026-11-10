@@ -86,6 +86,7 @@ use super::kuna_poolref::PoolImage;
 use super::kuna_regcarry::{self, Machine as CarryMachine};
 use super::kuna_switchtable;
 use super::model::{FlowKind, RawOp};
+use crate::kuna_imageview::{ImageView, ObjectView};
 #[path = "kuna_prefixreuse.rs"]
 mod kuna_prefixreuse;
 
@@ -654,11 +655,17 @@ impl AssemblyEmit for AsmCapture {
 /// prologue scan, and the drivers inject nothing there), so the seed set on that
 /// architecture is exactly the caller's inventory.
 pub fn discovery_seeds(file: &object::File, entries: &[u64], patterns: bool) -> Vec<u64> {
+    discovery_seeds_in(&ObjectView::new(file), entries, patterns)
+}
+
+/// [`discovery_seeds`] over any image. On a view with no object file the
+/// prologue starts are those in its code regions.
+pub fn discovery_seeds_in(view: &dyn ImageView, entries: &[u64], patterns: bool) -> Vec<u64> {
     let mut seeds: Vec<u64> = entries.to_vec();
-    if patterns && file.architecture() != object::Architecture::X86_64 {
-        let execs = crate::entry::executable_sections(file);
+    if patterns && view.architecture() != object::Architecture::X86_64 {
+        let execs = crate::kuna_imageview::executable_sections(view);
         seeds.extend(
-            crate::entry::full_pattern_starts(file)
+            crate::entry::full_pattern_starts_in(view)
                 .into_iter()
                 .filter(|&vma| crate::entry::in_executable_section(&execs, vma)),
         );
@@ -685,7 +692,20 @@ pub fn build(
     translate: &dyn Translate,
     seeds: &[u64],
 ) -> XrefIndex {
-    descend(file, arch, translate, seeds, &[], (&[], &[]), false)
+    build_in(&ObjectView::new(file), arch, translate, seeds)
+}
+
+/// [`build`] over any image ([`ImageView`]). What only an object file holds
+/// (mapping symbols, the GOT, a PIC base, decode-mode markers) is absent from
+/// a view without one, so those refinements stay off; the decode-mode context
+/// is whatever the loader painted.
+pub fn build_in(
+    view: &dyn ImageView,
+    arch: &Architecture,
+    translate: &dyn Translate,
+    seeds: &[u64],
+) -> XrefIndex {
+    descend(view, arch, translate, seeds, &[], (&[], &[]), false)
 }
 
 /// [`build`], also keeping the successor graph
@@ -698,7 +718,7 @@ pub fn build_measured(
     translate: &dyn Translate,
     seeds: &[u64],
 ) -> XrefIndex {
-    descend(file, arch, translate, seeds, &[], (&[], &[]), true)
+    descend(&ObjectView::new(file), arch, translate, seeds, &[], (&[], &[]), true)
 }
 
 /// [`build`], plus the addresses the CALLER named.
@@ -720,7 +740,7 @@ pub fn build_with_focus(
     seeds: &[u64],
     focus: &[u64],
 ) -> XrefIndex {
-    descend(file, arch, translate, seeds, focus, (&[], &[]), false)
+    descend(&ObjectView::new(file), arch, translate, seeds, focus, (&[], &[]), false)
 }
 
 /// [`build_with_focus`], where a focus address may also lie in one of
@@ -740,7 +760,7 @@ pub fn build_with_unflagged_focus(
     unflagged: &[(u64, u64)],
     declared: &[u64],
 ) -> XrefIndex {
-    descend(file, arch, translate, seeds, focus, (unflagged, declared), false)
+    descend(&ObjectView::new(file), arch, translate, seeds, focus, (unflagged, declared), false)
 }
 
 /// The walk behind every `build*`.
@@ -752,7 +772,7 @@ pub fn build_with_unflagged_focus(
 /// predicated skip of such a jump, which stays one of its `flows`, files no row
 /// ([`super::classify::Classified::predicated_skip`]).
 fn descend(
-    file: &object::File,
+    view: &dyn ImageView,
     arch: &Architecture,
     translate: &dyn Translate,
     seeds: &[u64],
@@ -765,7 +785,7 @@ fn descend(
     };
 
     let exec: Vec<(u64, u64)> = {
-        let mut r: Vec<(u64, u64)> = crate::entry::executable_sections(file)
+        let mut r: Vec<(u64, u64)> = crate::kuna_imageview::executable_sections(view)
             .into_iter()
             .map(|(lo, hi, _data)| (lo, hi))
             .collect();
@@ -781,13 +801,16 @@ fn descend(
     // to classify data references against it (they would all be wrong).
     let exec_set = range_union(exec.clone());
     let sections_are_runtime = !exec.is_empty() && seeds.iter().any(|&s| in_range(&exec_set, s));
-    let mapped = if sections_are_runtime { range_union(mapped_ranges(file)) } else { Vec::new() };
+    let mapped = if sections_are_runtime { range_union(crate::kuna_imageview::mapped_ranges(view)) } else { Vec::new() };
 
     // Paint the decode-mode context (ARM `TMode` / MIPS `ISA_MODE`) before the
     // first decode, exactly as the Listing walk does — without it a Thumb
     // function reads as A32 garbage and its references are fiction. Empty (and
     // free) on x86-64 and every language with no decode-mode context.
-    let painter = ContextPainter::new(file, arch);
+    let painter = match view.object() {
+        Some(file) => ContextPainter::new(file, arch),
+        None => ContextPainter::empty(),
+    };
     if !painter.is_empty() {
         painter.paint_all(arch, &code_space);
     }
@@ -809,7 +832,7 @@ fn descend(
     // leaves the walk below byte-identical to the pre-feature one.
     let picbase: Option<(PicCtx, PicBase)> = if arch.analysis_picbase && !mapped.is_empty() {
         PicCtx::new(arch, data_space.as_ref()).and_then(|ctx| {
-            kuna_picbase::detect(file, translate, &code_space, &ctx, &seed_set).map(|b| (ctx, b))
+            kuna_picbase::detect(view.object()?, translate, &code_space, &ctx, &seed_set).map(|b| (ctx, b))
         })
     } else {
         None
@@ -820,13 +843,13 @@ fn descend(
     // pool word can be followed to what it points at. `None` (an image with no
     // read-only mapped section, and every relocatable object, whose sections are
     // not the runtime ones) leaves every reference below exactly as it was.
-    let pool = if mapped.is_empty() { None } else { PoolImage::new(file) };
+    let pool = if mapped.is_empty() { None } else { PoolImage::new_in(view) };
     // (kuna) `picpool`: the GOT's file bytes, read through a PC-composed base.
-    let got = if mapped.is_empty() { None } else { GotImage::new(file) };
+    let got = if mapped.is_empty() { None } else { view.object().and_then(GotImage::new) };
     // (kuna) `pcform`: the addresses an instruction forms from its own address,
     // which the `checkOperands` floor must not drop. `None` unless the image
     // maps something below that floor. See [`super::kuna_pcform`].
-    let pcform = PcForm::new(file, pool.as_ref(), &mapped);
+    let pcform = PcForm::new(view, pool.as_ref(), &mapped);
     let max_entries = match arch.max_jumptable_size {
         0 => kuna_switchtable::DEFAULT_MAX_ENTRIES,
         n => n as usize,
@@ -837,18 +860,20 @@ fn descend(
         preserved: if arch.analysis_switchreach { &preserved } else { &[] },
         far: arch.analysis_switchreach,
     };
-    let arm = file.architecture() == object::Architecture::Arm;
+    let arm = view.architecture() == object::Architecture::Arm;
     let pic_image = pool.as_ref().map(|pool| kuna_picpool::Image {
         pool,
         mapped: &mapped,
-        extended: [".got", ".got.plt", ".dynamic"].iter().any(|name| file.section_by_name(name).is_some()),
+        extended: view
+            .object()
+            .is_some_and(|file| [".got", ".got.plt", ".dynamic"].iter().any(|name| file.section_by_name(name).is_some())),
         data_space: data_space.as_ref(),
         got: got.as_ref(),
         preserved: &preserved,
     });
     // (kuna) `regcarry`: the register space a carried constant lives in.
     let carry_machine = CarryMachine::new(
-        file,
+        view,
         arch.manage().get_space_by_name("register"),
         data_space.as_ref(),
         &preserved,
@@ -861,16 +886,16 @@ fn descend(
     // decoded instruction ending at the key, as `(dispatch, mode, branch)`.
     let mut waiting: HashMap<u64, Vec<(u64, _, VarnodeData)>> = HashMap::new();
     let thumb_tables = (arch.analysis_thumbswitch && sections_are_runtime)
-        .then(|| super::kuna_thumbswitch::HalfwordTables::new(file, data_space.clone(), max_entries))
+        .then(|| super::kuna_thumbswitch::HalfwordTables::new_in(view, data_space.clone(), max_entries))
         .flatten();
     let a32_tables = pool
         .as_ref()
-        .filter(|_| super::kuna_a32switch::applies(file, arch))
+        .filter(|_| super::kuna_a32switch::applies(view, arch))
         .map(|pool| super::kuna_a32switch::A32Tables::new(arch, pool));
 
     let preserve_bodies = sections_are_runtime
         && arch.analysis_funcstart_patterns
-        && file.architecture() == object::Architecture::Arm;
+        && view.architecture() == object::Architecture::Arm;
     let prologues = preserve_bodies && arch.analysis_armframes && arch.analysis_armframes_full;
     let mut st = State::new(&seed_set, measure || preserve_bodies);
 
@@ -943,7 +968,7 @@ fn descend(
                     );
                 }
                 let frames = crate::aif::raw_arm_frames(
-                    file, &listing, arch, translate, Rc::clone(&code_space), &exec, true, None,
+                    view, &listing, arch, translate, Rc::clone(&code_space), &exec, true, None,
                 );
                 let found = frames.roots.clone();
                 frame_cache = frames;
@@ -1101,7 +1126,7 @@ fn descend(
                         fingerprint_contexts.as_ref(),
                         frame_partition.as_ref(),
                         arch.analysis_aifbracket
-                            .then(|| crate::aif::kuna_aifbracket::BracketEvidence::from_object(file, &exec))
+                            .then(|| crate::aif::kuna_aifbracket::BracketEvidence::from_view(view, &exec))
                             .as_ref(),
                     );
                     pending_focus.extend(found.into_iter().rev());
@@ -1487,7 +1512,7 @@ fn descend(
     // (kuna) `picpool`: a Thumb pointer is its entry with bit 0 set. See
     // [`thumb_target`].
     if !thumb_refs.is_empty() {
-        let markers = mapping_markers(file);
+        let markers = view.object().map(mapping_markers).unwrap_or_default();
         for (vma, to, kind, text) in thumb_refs {
             let to = thumb_target(to, &st, &markers);
             st.file(vma, to, kind, &text);
@@ -2352,7 +2377,7 @@ pub(super) fn looks_like_address(value: u64) -> bool {
 /// `__TEXT,__stubs` read as unknown and every reference into them was dropped
 /// (GH #1376). dyld maps every section of a loaded segment, so on Mach-O each
 /// section is mapped except a debug one.
-fn mapped_ranges(file: &object::File) -> Vec<(u64, u64)> {
+pub(crate) fn mapped_ranges(file: &object::File) -> Vec<(u64, u64)> {
     let mut out = Vec::new();
     if file.sections().next().is_none() {
         // `object`'s ELF segment iterator already yields only `PT_LOAD`, which
@@ -2373,28 +2398,33 @@ fn mapped_ranges(file: &object::File) -> Vec<(u64, u64)> {
         if lo == 0 || size == 0 {
             continue;
         }
-        let allocated = match sec.flags() {
-            object::SectionFlags::Elf { sh_flags } => sh_flags & SHF_ALLOC != 0,
-            object::SectionFlags::MachO { flags } => {
-                flags & object::macho::S_ATTR_DEBUG == 0 && sec.kind() != SectionKind::Debug
-            }
-            _ => matches!(
-                sec.kind(),
-                SectionKind::Text
-                    | SectionKind::Data
-                    | SectionKind::ReadOnlyData
-                    | SectionKind::ReadOnlyDataWithRel
-                    | SectionKind::ReadOnlyString
-                    | SectionKind::UninitializedData
-                    | SectionKind::Common
-            ),
-        };
-        if allocated {
+        if is_mapped_section(&sec) {
             out.push((lo, lo.saturating_add(size)));
         }
     }
     out.sort_unstable();
     out
+}
+
+/// Whether the loader maps `sec`: allocated on ELF, not debug on Mach-O, and a
+/// code or data kind elsewhere.
+pub(crate) fn is_mapped_section(sec: &object::Section) -> bool {
+    match sec.flags() {
+        object::SectionFlags::Elf { sh_flags } => sh_flags & SHF_ALLOC != 0,
+        object::SectionFlags::MachO { flags } => {
+            flags & object::macho::S_ATTR_DEBUG == 0 && sec.kind() != SectionKind::Debug
+        }
+        _ => matches!(
+            sec.kind(),
+            SectionKind::Text
+                | SectionKind::Data
+                | SectionKind::ReadOnlyData
+                | SectionKind::ReadOnlyDataWithRel
+                | SectionKind::ReadOnlyString
+                | SectionKind::UninitializedData
+                | SectionKind::Common
+        ),
+    }
 }
 
 /// Does `vma` land in any `[lo, hi)` of `ranges`? They must be sorted by start

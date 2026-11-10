@@ -86,6 +86,19 @@ impl<'a> PoolImage<'a> {
         Self::from_ranges(ro, if file.is_64() { 8 } else { 4 }, file.is_little_endian())
     }
 
+    /// [`Self::new`] over any image: an object file's read-only sections, or
+    /// another view's read-only regions with bytes.
+    pub(super) fn new_in(view: &'a dyn crate::kuna_imageview::ImageView) -> Option<Self> {
+        match view.object() {
+            Some(file) => Self::new(file),
+            None => Self::from_ranges(
+                crate::kuna_imageview::read_only(view),
+                view.pointer_width(),
+                view.is_little_endian(),
+            ),
+        }
+    }
+
     /// [`Self::new`] over an already-collected range list, which is what makes
     /// the dereference testable without an image on disk.
     pub(super) fn from_ranges(mut ro: Vec<(u64, u64, &'a [u8])>, ptr: u32, little_endian: bool) -> Option<Self> {
@@ -185,7 +198,7 @@ impl<'a> PoolImage<'a> {
 
 /// Is `sec` mapped at run time and never written? Per-format, falling back to the
 /// neutral [`SectionKind`] when the container carries no flags we understand.
-fn is_read_only(sec: &object::Section) -> bool {
+pub(crate) fn is_read_only(sec: &object::Section) -> bool {
     match sec.flags() {
         object::SectionFlags::Elf { sh_flags } => {
             sh_flags & SHF_ALLOC != 0 && sh_flags & SHF_WRITE == 0
