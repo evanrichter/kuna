@@ -56,20 +56,29 @@ fn arm_thumb() -> String {
         .to_string()
 }
 
+/// Frame recovery still finds the Thumb function at 0x48a under `--isa arm`,
+/// but its modes only steer the walk: decompilation decodes in the stated ISA,
+/// so only `--isa auto` reads 0x48a as Thumb and folds its GOT load to `tab`.
 #[test]
 fn explicit_isa_does_not_pin_uniform_recovery_spans() {
     let bin = repo_root().join("decompiler/crates/kuna-analysis/tests/fixtures/arm_interwork_stubs_o0_le32");
-    let (stdout, stderr, ok) = run_kuna(&[
-        "decompile-all", bin.to_str().unwrap(), "--json", "--isa", "arm",
-        "--mode", "reliable", "--option", "funcstart_patterns", "on",
-        "--option", "armframes", "on", "--option", "aif", "on",
-    ]);
-    assert!(ok, "{stderr}");
-    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    let function = doc["functions"].as_array().unwrap().iter()
-        .find(|function| function["address"].as_u64() == Some(0x48a)).unwrap();
-    let code = function["code"].as_str().unwrap();
-    assert!(code.contains("dat_2010") && !code.contains("halt_baddata"), "{code}");
+    let code_at_48a = |isa: &str| {
+        let (stdout, stderr, ok) = run_kuna(&[
+            "decompile-all", bin.to_str().unwrap(), "--json", "--isa", isa,
+            "--mode", "reliable", "--option", "funcstart_patterns", "on",
+            "--option", "armframes", "on", "--option", "aif", "on",
+        ]);
+        assert!(ok, "{stderr}");
+        let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        let function = doc["functions"].as_array().unwrap().iter()
+            .find(|function| function["address"].as_u64() == Some(0x48a))
+            .unwrap_or_else(|| panic!("--isa {isa} lost sub_48a"));
+        function["code"].as_str().unwrap().to_string()
+    };
+    let thumb = code_at_48a("auto");
+    assert!(thumb.contains("tab[") && !thumb.contains("bad instruction data"), "{thumb}");
+    let arm = code_at_48a("arm");
+    assert!(arm.contains("bad instruction data") && !arm.contains("tab["), "{arm}");
 }
 
 fn arm_thumb_pe() -> String {
