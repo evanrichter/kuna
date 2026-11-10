@@ -2700,7 +2700,8 @@ AAELF32 mark of an A32 function, when it lies in an executable section of a link
 ARM ELF after an odd function symbol, and sets `TMode=1` again where its extent ends.
 The extent is the symbol's size cut at the next function symbol and at the end of the
 section: an exported Thumb function whose symbol the linker moved onto its A32
-interworking stub keeps the function's size, and must paint only the stub. The extent
+interworking stub keeps the function's size, and must paint only the stub; the
+function behind the stub is painted Thumb below. The extent
 then grows over every direct A32 `b`/`bl` target it reaches before the next function
 symbol, up to the first return, unconditional branch, call to a function the
 no-return list names (the image's own definition or its PLT stub), or literal-pool word
@@ -2728,6 +2729,17 @@ of them, since a Thumb branch cannot reach A32 code without an exchange. Without
 check a Thumb walk over the zero padding before an A32 routine was accepted once its
 branches landed on the A32 instruction starts the extent now yields; an explicit `--isa` states the whole
 image's mode and turns the pass off.
+(kuna) Some linkers move an exported Thumb function's symbol onto an A32 stub that loads
+the Thumb address and jumps to it, so every function symbol is even and nothing marks
+the function behind the stub Thumb. The same pass
+(`decompiler/crates/kuna-analysis/src/loader/kuna_armfuncmode.rs (arm_veneer_mode_paints)`)
+recognises the three GNU A32 stub shapes (`ldr ip,[pc,#4] ; add ip,ip,pc ; bx ip`,
+`ldr ip,[pc] ; bx ip` and `ldr pc,[pc,#-4]`, each followed by its literal) at even
+function symbols and paints `TMode=1` over each odd target, for the
+stub symbol's size and no further than the next function symbol, stub target or section
+end. It keeps the exclusions above and skips a target that has its own symbol. These
+paints are committed only: the Listing's context painter does not take them, so
+`armwalkmode` and `flowmode` still run over the targets.
 `decompiler/crates/kuna-analysis/src/loader/mips_markers.rs` carries the MIPS pair:
 `MipsIsaModePass` (`mips_isa`) paints `ISA_MODE` at MIPS16e/microMIPS entries
 (LSB-set or `st_other` STO-marked), and `MipsMarkerPass` (`mips_gp`) is a register
