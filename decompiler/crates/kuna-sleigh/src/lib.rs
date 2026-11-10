@@ -23,6 +23,7 @@ pub mod loadimage;
 pub mod kuna_ctxsnapshot;
 pub mod kuna_contextscope;
 pub mod kuna_sharedbytes;
+pub mod kuna_mappedimage;
 pub mod loadimage_xml;
 pub mod memstate;
 pub mod emulate;

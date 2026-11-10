@@ -49,6 +49,8 @@ use kuna_decomp::options::register_option_elements;
 use kuna_decomp::raw_arch::RawBinaryArchitectureCapability;
 use kuna_decomp::kuna_memoryspecs::IntoSpecRoot;
 use kuna_decomp::kuna_loadoptions::LoadOptions;
+pub use kuna_decomp::kuna_loadmap::{LoadEntry, LoadMap, LoadRegion, RegionBytes};
+use kuna_sleigh::kuna_mappedimage::{MappedBytes, MappedLoadImage};
 use kuna_decomp::sleigh_arch::{register_sleigh_arch_ids, LanguageDatabase, SleighArchitecture};
 use kuna_decomp::xml_arch::XmlArchitectureCapability;
 
@@ -542,6 +544,9 @@ pub struct ConsoleProgram {
     /// source names, so their names are generated at `read symbols`, after the
     /// CLI has applied options such as `namestyle`.
     pending_synthetic_entries: Vec<Address>,
+    /// (kuna) Names a memory map gave some of [`Self::pending_synthetic_entries`],
+    /// keyed by entry offset; the rest take generated names.
+    pending_entry_names: BTreeMap<u64, String>,
     /// Original-to-synthetic section map for relocatable objects.
     object_sections: Vec<ObjectSectionLocation>,
     /// A human-readable description of the loaded program (C++
@@ -2906,11 +2911,14 @@ impl ConsoleProgram {
                 Vec::new()
             };
             let entries = std::mem::take(&mut self.pending_synthetic_entries);
+            let mut names = std::mem::take(&mut self.pending_entry_names);
             let symbols = entries
                 .into_iter()
                 .map(|addr| ProgramSymbol {
                     ordinal: 0,
-                    name: self.arch().name_function(&addr),
+                    name: names
+                        .remove(&addr.get_offset())
+                        .unwrap_or_else(|| self.arch().name_function(&addr)),
                     addr,
                     object_location: None,
                     binding: None,
@@ -4122,6 +4130,7 @@ fn empty_program(
         registry,
         symbols: SymbolStream::default(),
         pending_synthetic_entries: Vec::new(),
+        pending_entry_names: BTreeMap::new(),
         object_sections: Vec::new(),
         description,
         container,
@@ -4314,6 +4323,134 @@ pub(crate) fn bootstrap_raw_image(
 
     let mut prog = empty_program(raw.into_sleigh(), registry, ProgramContainer::Raw, description);
     prog.pending_synthetic_entries = pending_synthetic_entries;
+    prog.pending_analysis = input_isa_stash(input_context_paints);
+    prog.analysis_code_space = Some(code_space);
+    prog.raw_address_units = Some((word_size, arm32));
+    Ok(prog)
+}
+
+/// The memory-map bootstrap behind [`Bootstrap::memory_map`]: each
+/// file-backed region of `map` loads its file range at its address, each
+/// zero-filled region reads as unknown memory, and the entries seed function
+/// discovery, pending with their names. A [`MappedLoadImage`] stands in for the
+/// raw loader, and the read-only and volatile regions are marked on the symbol
+/// table. `isa` paints the executable regions as [`bootstrap_from_raw`] paints
+/// the whole image, and a raw ARM32 map needs it just as a raw image does.
+/// `from_env` as in [`bootstrap_object`].
+pub(crate) fn bootstrap_memory_map(
+    path: &str,
+    target: &str,
+    map: &LoadMap,
+    languages: &(impl Languages + ?Sized),
+    isa: Option<ArmIsa>,
+    options: &LoadOptions,
+    from_env: bool,
+) -> KunaResult<ConsoleProgram> {
+    let _load = enter_load(options, from_env);
+    if target.trim().is_empty() {
+        return Err(KunaError::lowlevel(
+            "memory-map input requires a SLEIGH language id",
+        ));
+    }
+    let file = std::fs::read(path)
+        .map_err(|e| KunaError::lowlevel(format!("Unable to open image file: {path}: {e}")))?;
+
+    let registry = build_registry();
+    let capability = RawBinaryArchitectureCapability::new();
+    let mut raw = capability.build_architecture(path, target);
+    let db = languages.database(&registry)?;
+    raw.resolve_architecture(&db)?;
+    if raw.sleigh().language_index() < 0 {
+        return Err(KunaError::lowlevel(format!(
+            "No sleigh specification for architecture {target}"
+        )));
+    }
+    build_engine_and_init(raw.sleigh_mut(), &db)?;
+
+    let code_space = default_code_space(raw.sleigh())?;
+    let word_size = u64::from(code_space.get_word_size());
+    let arch_id = raw.sleigh().arch_id().to_string();
+    let arm32 = is_arm32_language(&arch_id);
+    if arm32 && isa.is_none() {
+        return Err(KunaError::lowlevel(
+            "memory-map ARM32 input requires an ISA, arm or thumb",
+        ));
+    }
+    let plan = crate::kuna_memorymap::plan(
+        map,
+        file.len() as u64,
+        word_size,
+        code_space.get_highest(),
+        arm32,
+    )
+    .map_err(|e| KunaError::lowlevel(format!("memory map: {e}")))?;
+    let bytes = MappedBytes::new(plan.regions.clone(), file)
+        .map_err(|e| KunaError::lowlevel(format!("memory map: {e}")))?;
+    let mut image = MappedLoadImage::new(path, bytes);
+    image.attach_to_space(Rc::clone(&code_space));
+
+    let input_context_paints = install_input_isa(
+        raw.sleigh_mut().base_mut().unwrap(),
+        &arch_id,
+        &code_space,
+        &plan.executable,
+        isa,
+        isa.is_some(),
+    )?;
+    let real_mode: Vec<(u64, u16)> = plan
+        .executable
+        .iter()
+        .filter_map(|&(start, size)| {
+            kuna_analysis::loader::kuna_realmodecs::raw_image_cs(start, size).map(|cs| (start, cs))
+        })
+        .collect();
+    if !real_mode.is_empty() {
+        kuna_analysis::loader::kuna_realmodecs::paint(
+            raw.sleigh().base().unwrap(),
+            &code_space,
+            &real_mode,
+        );
+    }
+
+    let manager = raw.sleigh().base().unwrap().manage();
+    let readonly_ranges = loader_readonly_ranges(&image, manager);
+    let litpool_const =
+        kuna_decomp::kuna_litpoolconst::code_const_ranges(&[], &image.get_segments());
+    let mut volatile = kuna_base::address::RangeList::new();
+    for &(start, size) in &plan.volatile {
+        volatile.insert_range(Rc::clone(&code_space), start, start + (size - 1));
+    }
+    let volatile_ranges: Vec<(Address, Address)> = volatile
+        .iter()
+        .map(|range| (range.get_first_addr(), range.get_last_addr_open(manager)))
+        .collect();
+    let description = raw.sleigh().base().unwrap().get_description().to_string();
+    raw.sleigh_mut()
+        .base_mut()
+        .unwrap()
+        .set_loader(Box::new(image));
+
+    let mut prog = empty_program(
+        raw.into_sleigh(),
+        registry,
+        ProgramContainer::Raw,
+        description,
+    );
+    apply_readonly_ranges(&mut prog, &readonly_ranges);
+    prog.arch_mut().litpool_const = Rc::new(litpool_const);
+    for (first, last_open) in &volatile_ranges {
+        prog.arch_mut().symboltab.set_property_range(
+            kuna_decomp::varnode::varnode_flags::volatil,
+            first,
+            last_open,
+        );
+    }
+    prog.pending_synthetic_entries = plan
+        .entries
+        .iter()
+        .map(|&entry| Address::new(Rc::clone(&code_space), entry))
+        .collect();
+    prog.pending_entry_names = plan.names;
     prog.pending_analysis = input_isa_stash(input_context_paints);
     prog.analysis_code_space = Some(code_space);
     prog.raw_address_units = Some((word_size, arm32));

@@ -7,10 +7,11 @@ use std::rc::Rc;
 
 use kuna_base::error::KunaResult;
 use kuna_base::xml::Element;
+use kuna_decomp::kuna_loadmap::LoadMap;
 use kuna_decomp::kuna_loadoptions::{self, LoadOptions, LoadScope};
 
 use crate::engine::{
-    arm_isa_from_env, bootstrap_image, bootstrap_mz_bytes, bootstrap_object,
+    arm_isa_from_env, bootstrap_image, bootstrap_memory_map, bootstrap_mz_bytes, bootstrap_object,
     bootstrap_raw_image, bootstrap_te, bootstrap_te_bytes, bootstrap_xml_image, classify_file,
     xml_root_image, ArmIsa, ConsoleProgram, FileInput, Languages,
 };
@@ -40,8 +41,8 @@ impl<L: Languages + ?Sized> LanguageSource for L {}
 ///
 /// Each setting has a default:
 ///
-/// - **target**: empty, so the input chooses its language. A raw image has no
-///   header to choose from and needs one.
+/// - **target**: empty, so the input chooses its language. A raw image or a
+///   memory map has no header to choose from and needs one.
 /// - **options**: none, so the load reads the process environment. Every
 ///   input puts the environment in force on the calling thread for the load,
 ///   even when another program's options are in force there, and the program
@@ -170,6 +171,28 @@ impl<'a, L: LanguageSource + ?Sized> Bootstrap<'a, L> {
         let isa = self.resolved_isa()?;
         let _load = self.enter();
         bootstrap_raw_image(path, self.target, base, entries, isa, self.languages, None)
+    }
+
+    /// Load a headerless image laid out by `map`: each file-backed region loads
+    /// its file range at its address, each zero-filled region reads as unknown
+    /// memory, and the map's entries seed function discovery under their names.
+    /// Needs a target, and an ISA for a 32-bit ARM target.
+    pub fn memory_map(&self, path: &str, map: &LoadMap) -> KunaResult<ConsoleProgram> {
+        let isa = self.resolved_isa()?;
+        match self.options {
+            Some(options) => {
+                bootstrap_memory_map(path, self.target, map, self.languages, isa, options, false)
+            }
+            None => bootstrap_memory_map(
+                path,
+                self.target,
+                map,
+                self.languages,
+                isa,
+                &LoadOptions::from_env(),
+                true,
+            ),
+        }
     }
 
     /// Load a UEFI TE image, as [`bootstrap_from_te`](crate::engine::bootstrap_from_te) does.

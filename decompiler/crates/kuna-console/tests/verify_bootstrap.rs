@@ -9,11 +9,15 @@ use std::rc::Rc;
 use kuna_analysis::loadimage_te::synthetic::TeImage;
 use kuna_base::error::KunaResult;
 use kuna_base::xml::{DocumentStorage, Element};
-use kuna_console::engine::{language_database, Bootstrap, ConsoleProgram};
+use kuna_console::engine::{
+    language_database, ArmIsa, Bootstrap, ConsoleProgram, LoadEntry, LoadMap, LoadRegion,
+    RegionBytes,
+};
 use kuna_console::project::{decompile_entry, DecompileOptions};
 use kuna_decomp::kuna_loadoptions::{environment_fallbacks, LoadOptions};
 
 const X86_64: &str = "x86:LE:64:default";
+const CORTEX: &str = "ARM:LE:32:Cortex";
 /// `lea rax, [rdi+rbx]; ret`
 const X86_ADD: [u8; 5] = [0x48, 0x8d, 0x04, 0x1f, 0xc3];
 /// Thumb `movs r0, #7; bx lr`, which decodes as something else in A32.
@@ -122,6 +126,37 @@ fn xml_root() -> Rc<Element> {
         .clone()
 }
 
+fn flash_map(size: u64) -> LoadMap {
+    LoadMap {
+        regions: vec![
+            LoadRegion {
+                name: "flash".into(),
+                address: 0x0800_0000,
+                size,
+                bytes: RegionBytes::File { offset: 0 },
+                read: true,
+                write: false,
+                execute: true,
+                volatile: false,
+            },
+            LoadRegion {
+                name: "sram".into(),
+                address: 0x2000_0000,
+                size: 0x1000,
+                bytes: RegionBytes::Zero,
+                read: true,
+                write: true,
+                execute: false,
+                volatile: false,
+            },
+        ],
+        entries: vec![LoadEntry {
+            address: 0x0800_0000,
+            name: Some("seven".into()),
+        }],
+    }
+}
+
 type Load<'a> = dyn Fn() -> KunaResult<ConsoleProgram> + 'a;
 
 #[test]
@@ -134,6 +169,8 @@ fn explicit_options_reach_every_input_without_the_environment() {
     let mz_bytes = dos_image();
     let mz = Scratch::new("bootstrap-scoped-mz", "exe", &mz_bytes);
     let xml = Scratch::new("bootstrap-scoped-xml", "xml", XML_IMAGE.as_bytes());
+    let flash = Scratch::new("bootstrap-scoped-map", "bin", &THUMB_RETURN_7);
+    let map = flash_map(THUMB_RETURN_7.len() as u64);
     let fauxware = fixture("fauxware");
     let options = LoadOptions {
         goabi: false,
@@ -148,6 +185,14 @@ fn explicit_options_reach_every_input_without_the_environment() {
         (
             "raw",
             Box::new(|| load.target(X86_64).raw(raw.path(), 0x1000, &[0x1000])),
+        ),
+        (
+            "memory map",
+            Box::new(|| {
+                load.target(CORTEX)
+                    .arm_isa(Some(ArmIsa::Thumb))
+                    .memory_map(flash.path(), &map)
+            }),
         ),
         ("te", Box::new(|| load.te(te.path()))),
         ("te bytes", Box::new(|| load.te_bytes(te.path(), &te_bytes))),
