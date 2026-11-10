@@ -86,8 +86,7 @@ impl BracketEvidence {
         use object::SectionKind;
         let width = if file.is_64() { 8 } else { 4 };
         let little = file.is_little_endian();
-        let in_exec = |v: u64| exec.iter().any(|&(lo, hi)| lo <= v && v < hi);
-        let mut pointers = HashSet::new();
+        let mut evidence = BracketEvidence::default();
         for sec in file.sections() {
             let allocated = match sec.flags() {
                 object::SectionFlags::Elf { sh_flags } => {
@@ -113,22 +112,45 @@ impl BracketEvidence {
                 continue;
             }
             let Ok(data) = sec.data() else { continue };
-            let skew = ((width - sec.address() % width) % width) as usize;
-            for word in data.get(skew..).unwrap_or(&[]).chunks_exact(width as usize) {
-                let value = match (width, little) {
-                    (8, true) => u64::from_le_bytes(word.try_into().unwrap()),
-                    (8, false) => u64::from_be_bytes(word.try_into().unwrap()),
-                    (_, true) => u64::from(u32::from_le_bytes(word.try_into().unwrap())),
-                    (_, false) => u64::from(u32::from_be_bytes(word.try_into().unwrap())),
-                };
-                for v in [value, value & !1] {
-                    if in_exec(v) {
-                        pointers.insert(v);
-                    }
+            evidence.add_pointers(sec.address(), data, width, little, exec);
+        }
+        evidence
+    }
+
+    /// [`Self::from_object`] over any image: a view with no object file reads
+    /// the words of every region that holds bytes.
+    pub(crate) fn from_view(view: &dyn crate::kuna_imageview::ImageView, exec: &[(u64, u64)]) -> Self {
+        if let Some(file) = view.object() {
+            return Self::from_object(file, exec);
+        }
+        let width = u64::from(view.pointer_width());
+        let little = view.is_little_endian();
+        let mut evidence = BracketEvidence::default();
+        for region in view.regions() {
+            let Some(data) = region.bytes.filter(|_| region.address != 0) else { continue };
+            evidence.add_pointers(region.address, data, width, little, exec);
+        }
+        evidence
+    }
+
+    /// Add each aligned `width`-byte word of `data`, mapped at `address`, whose
+    /// value (with or without the Thumb bit) lies in `exec`.
+    fn add_pointers(&mut self, address: u64, data: &[u8], width: u64, little: bool, exec: &[(u64, u64)]) {
+        let in_exec = |v: u64| exec.iter().any(|&(lo, hi)| lo <= v && v < hi);
+        let skew = ((width - address % width) % width) as usize;
+        for word in data.get(skew..).unwrap_or(&[]).chunks_exact(width as usize) {
+            let value = match (width, little) {
+                (8, true) => u64::from_le_bytes(word.try_into().unwrap()),
+                (8, false) => u64::from_be_bytes(word.try_into().unwrap()),
+                (_, true) => u64::from(u32::from_le_bytes(word.try_into().unwrap())),
+                (_, false) => u64::from(u32::from_be_bytes(word.try_into().unwrap())),
+            };
+            for v in [value, value & !1] {
+                if in_exec(v) {
+                    self.pointers.insert(v);
                 }
             }
         }
-        BracketEvidence { pointers }
     }
 }
 

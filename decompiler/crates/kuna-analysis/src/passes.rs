@@ -1000,7 +1000,7 @@ pub fn run_listing_consumers_replaying(
             let mut frame_cache = match frames_replay {
                 Some(_) => None,
                 None => Some(crate::aif::raw_arm_frames(
-                    &file,
+                    &crate::kuna_imageview::ObjectView::new(&file),
                     &listing,
                     arch,
                     translate,

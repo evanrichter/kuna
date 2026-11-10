@@ -51,8 +51,6 @@
 //! Only an image that maps something below the floor builds a [`PcForm`]; every
 //! other image cannot hold an address below it, and its walk is unchanged.
 
-use object::Object;
-
 use super::kuna_poolref::PoolImage;
 
 /// The `checkOperands` floor the exemption is about: an image that maps
@@ -93,14 +91,18 @@ impl<'a> PcForm<'a> {
     /// The recogniser for `file`, or `None` when nothing it could find would
     /// change an answer: the image maps nothing below the floor, or its ISA
     /// keeps the PC visible in the p-code.
-    pub(super) fn new(file: &object::File, code: Option<&'a PoolImage<'a>>, mapped: &[(u64, u64)]) -> Option<Self> {
+    pub(super) fn new(
+        view: &dyn crate::kuna_imageview::ImageView,
+        code: Option<&'a PoolImage<'a>>,
+        mapped: &[(u64, u64)],
+    ) -> Option<Self> {
         if mapped.first().is_none_or(|&(lo, _)| lo >= FLOOR) {
             return None;
         }
-        let isa = match file.architecture() {
+        let isa = match view.architecture() {
             object::Architecture::Aarch64 => Isa::Aarch64,
             object::Architecture::X86_64 => Isa::X86_64,
-            object::Architecture::Arm if file.is_little_endian() => Isa::Arm,
+            object::Architecture::Arm if view.is_little_endian() => Isa::Arm,
             _ => return None,
         };
         Some(PcForm { isa, code: code? })

@@ -36,6 +36,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use kuna_base::address::Address;
 use kuna_base::error::{KunaError, KunaResult};
@@ -50,6 +51,7 @@ use kuna_decomp::raw_arch::RawBinaryArchitectureCapability;
 use kuna_decomp::kuna_memoryspecs::IntoSpecRoot;
 use kuna_decomp::kuna_loadoptions::LoadOptions;
 pub use kuna_decomp::kuna_loadmap::{LoadEntry, LoadMap, LoadRegion, RegionBytes};
+use kuna_analysis::kuna_imageview::MappedView;
 use kuna_sleigh::kuna_mappedimage::{MappedBytes, MappedLoadImage};
 use kuna_decomp::sleigh_arch::{register_sleigh_arch_ids, LanguageDatabase, SleighArchitecture};
 use kuna_decomp::xml_arch::XmlArchitectureCapability;
@@ -708,6 +710,9 @@ pub struct ConsoleProgram {
     pending_prototypes: BTreeMap<String, kuna_decomp::fspec::PrototypePieces>,
     /// Raw-input address-unit width and whether bit zero is an ARM state bit.
     raw_address_units: Option<(u64, bool)>,
+    /// (kuna) A memory map's bytes and its region names in address order;
+    /// `None` unless the program was loaded from a memory map.
+    memory_map: Option<(Arc<MappedBytes>, Vec<String>)>,
     /// (kuna) The loader's **import pointer slots** as half-open `[lo, hi)` VMA
     /// ranges — the PE Import Address Table words, read off
     /// `ObjectLoadImage::import_slot_ranges` at bootstrap.
@@ -807,6 +812,27 @@ impl ConsoleProgram {
     /// The loaded image's file name, as the loader reports it.
     fn image_path(&self) -> String {
         self.arch().translate().loader_rc().borrow().get_file_name().to_string()
+    }
+
+    /// (kuna) The image a whole-image walk reads
+    /// ([`kuna_analysis::listing::xrefs::build_in`]) for a program loaded from
+    /// a memory map: its regions by name, with the language's architecture,
+    /// byte order and pointer width. `None` for every other program.
+    pub fn image_view(&self) -> Option<MappedView<'_>> {
+        let (bytes, names) = self.memory_map.as_ref()?;
+        let translate = self.arch().translate();
+        let pointer_width = self
+            .arch()
+            .manage()
+            .get_default_data_space()
+            .map_or(4, |space| space.get_addr_size());
+        let view = MappedView::new(
+            bytes,
+            object_architecture(&self.arch().archid),
+            !translate.is_big_endian(),
+            pointer_width,
+        );
+        Some(view.with_names(names))
     }
 
     /// Scale a user-facing raw address to the engine's byte offset without
@@ -4161,6 +4187,7 @@ fn empty_program(
         assertion_outcomes: Vec::new(),
         pending_prototypes: BTreeMap::new(),
         raw_address_units: None,
+        memory_map: None,
         import_slots: Vec::new(),
         symbol_underscore_prefix: false,
         load_notes: Vec::new(),
@@ -4388,6 +4415,7 @@ pub(crate) fn bootstrap_memory_map(
         .map_err(|e| KunaError::lowlevel(format!("memory map: {e}")))?;
     let mut image = MappedLoadImage::new(path, bytes);
     image.attach_to_space(Rc::clone(&code_space));
+    let mapped = Arc::clone(image.bytes());
 
     let input_context_paints = install_input_isa(
         raw.sleigh_mut().base_mut().unwrap(),
@@ -4454,7 +4482,30 @@ pub(crate) fn bootstrap_memory_map(
     prog.pending_analysis = input_isa_stash(input_context_paints);
     prog.analysis_code_space = Some(code_space);
     prog.raw_address_units = Some((word_size, arm32));
+    prog.memory_map = Some((mapped, plan.region_names));
     Ok(prog)
+}
+
+/// The `object` architecture of a SLEIGH language id, by its processor and
+/// size; `Unknown` for a processor `object` does not name.
+fn object_architecture(arch_id: &str) -> object::Architecture {
+    use object::Architecture as A;
+    let fields: Vec<&str> = arch_id.split(':').collect();
+    match (fields.first().copied(), fields.get(2).copied()) {
+        (Some("ARM"), Some("32")) => A::Arm,
+        (Some("AARCH64"), _) => A::Aarch64,
+        (Some("x86"), Some("64")) => A::X86_64,
+        (Some("x86"), Some("32")) => A::I386,
+        (Some("MIPS"), Some("32")) => A::Mips,
+        (Some("MIPS"), Some("64")) => A::Mips64,
+        (Some("PowerPC"), Some("32")) => A::PowerPc,
+        (Some("PowerPC"), Some("64")) => A::PowerPc64,
+        (Some("RISCV"), Some("32")) => A::Riscv32,
+        (Some("RISCV"), Some("64")) => A::Riscv64,
+        (Some("sparc"), Some("32")) => A::Sparc,
+        (Some("sparc"), Some("64")) => A::Sparc64,
+        _ => A::Unknown,
+    }
 }
 
 /// Bootstrap a real image on disk — a UEFI TE or an object-format binary —

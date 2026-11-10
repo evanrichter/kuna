@@ -7,11 +7,15 @@ use crate::common;
 
 use std::path::PathBuf;
 
+use kuna_analysis::analyzers::strings::kuna_stringinv::{self, Query, Termination};
+use kuna_analysis::kuna_imageview::ImageView;
+use kuna_analysis::listing::xrefs::{self, XrefKind};
 use kuna_console::engine::{
     language_database, ArmIsa, Bootstrap, ConsoleProgram, LoadEntry, LoadMap, LoadRegion,
     RegionBytes,
 };
 use kuna_console::decompile_step::{decompile_one, DecompileSeed};
+use kuna_console::inspect::string_uses_in;
 use kuna_decomp::decompile_drive::print_c;
 use kuna_decomp::kuna_loadoptions::{environment_fallbacks, LoadOptions};
 use kuna_decomp::kuna_memoryspecs::SpecRoot;
@@ -79,12 +83,35 @@ fn flash() -> Vec<u8> {
     words.iter().flat_map(|half| half.to_le_bytes()).collect()
 }
 
+/// `flash()` followed by `get_msg`, which returns the address of a string
+/// stored after its literal pool.
+const GET_MSG: u64 = 0x64;
+const MESSAGE: u64 = 0x6c;
+const TEXT: &str = "hello from flash";
+
+fn flash_with_message() -> Vec<u8> {
+    let mut bytes = flash();
+    assert_eq!(bytes.len() as u64, GET_MSG);
+    // ldr r0,[pc,#0]; bx lr; .word FLASH+MESSAGE
+    for half in [0x4800u16, 0x4770] {
+        bytes.extend(half.to_le_bytes());
+    }
+    bytes.extend(((FLASH + MESSAGE) as u32).to_le_bytes());
+    bytes.extend(TEXT.as_bytes());
+    bytes.push(0);
+    bytes
+}
+
 struct Image(PathBuf);
 
 impl Image {
     fn new() -> Image {
+        Image::holding(&flash())
+    }
+
+    fn holding(bytes: &[u8]) -> Image {
         let path = common::scratch_file("memory-map", "bin");
-        std::fs::write(&path, flash()).unwrap();
+        std::fs::write(&path, bytes).unwrap();
         Image(path)
     }
 
@@ -166,6 +193,19 @@ fn decompile(prog: &mut ConsoleProgram, func: &str) -> String {
         .result
         .expect("decompile succeeds");
     print_c(prog.arch_mut(), &fd)
+}
+
+/// The firmware with `get_msg` and its string, `get_msg` an entry.
+fn loaded_with_message() -> (Image, ConsoleProgram) {
+    let bytes = flash_with_message();
+    let image = Image::holding(&bytes);
+    let mut map = firmware_map();
+    map.regions[0].size = bytes.len() as u64;
+    map.entries.push(entry(GET_MSG, "get_msg"));
+    let mut prog = load(&image, &map).expect("bootstrap the memory map");
+    prog.commit_pending_analysis()
+        .expect("analysis commit succeeds");
+    (image, prog)
 }
 
 fn loaded() -> (Image, ConsoleProgram) {
@@ -357,4 +397,69 @@ fn a_language_database_loads_the_same_program() {
     for func in ["get_const", "uart_put", "wait_ready"] {
         assert_eq!(decompile(&mut prog, func), decompile(&mut scanned, func));
     }
+}
+
+#[test]
+fn the_reference_walk_finds_a_direct_call_in_a_memory_map() {
+    let (_image, prog) = loaded_with_message();
+    let view = prog.image_view().expect("a memory-map program has an image view");
+    let entries: Vec<u64> = prog
+        .function_entries_canonical()
+        .iter()
+        .map(|e| e.addr.get_offset())
+        .collect();
+    let seeds = xrefs::discovery_seeds_in(&view, &entries, prog.arch().analysis_funcstart_patterns);
+    let index = xrefs::build_in(&view, prog.arch(), prog.arch().translate(), &seeds);
+    let calls: Vec<(u64, XrefKind)> = index
+        .refs_to(FLASH + 0x60)
+        .iter()
+        .map(|r| (r.from, r.kind))
+        .collect();
+    assert_eq!(calls, vec![(FLASH + 0x52, XrefKind::Call)]);
+    assert_eq!(index.function_containing(FLASH + 0x52), Some(FLASH + 0x50));
+}
+
+#[test]
+fn the_inventory_finds_a_string_in_flash_and_the_load_that_uses_it() {
+    let (_image, prog) = loaded_with_message();
+    let view = prog.image_view().expect("a memory-map program has an image view");
+    let query = Query {
+        min_len: 5,
+        ascii: true,
+        utf8: false,
+        utf16: false,
+        section: None,
+        termination: Termination::Nul,
+    };
+    let inventory = kuna_stringinv::inventory_in(&view, &query);
+    assert_eq!(inventory.regions, vec!["flash"], "only flash holds bytes");
+    let found = inventory
+        .strings
+        .iter()
+        .find(|s| s.text == TEXT)
+        .expect("the string in flash is found");
+    assert_eq!(
+        (found.addr, found.section.as_deref()),
+        (FLASH + MESSAGE, Some("flash"))
+    );
+    let uses = string_uses_in(&prog, &view, &[(found.addr, u64::from(found.byte_len))]);
+    let sites: Vec<(u64, Option<&str>)> = uses[0]
+        .iter()
+        .map(|u| (u.row.site, u.row.name.as_deref()))
+        .collect();
+    assert_eq!(sites, vec![(FLASH + GET_MSG, Some("get_msg"))]);
+}
+
+#[test]
+fn a_memory_map_view_states_the_target_and_names_its_regions() {
+    let (_image, prog) = loaded();
+    let view = prog.image_view().expect("a memory-map program has an image view");
+    assert_eq!(view.architecture(), object::Architecture::Arm);
+    assert!(view.is_little_endian());
+    assert_eq!(view.pointer_width(), 4);
+    let names: Vec<Option<&str>> = view.regions().iter().map(|r| r.name).collect();
+    assert_eq!(
+        names,
+        vec![Some("flash"), Some("sram"), Some("rom"), Some("periph")]
+    );
 }

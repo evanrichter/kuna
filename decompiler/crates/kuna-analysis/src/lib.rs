@@ -32,6 +32,8 @@
 //!   fid, objc, rtti, pdb); re-exported flat as `kuna_analysis::<analyzer>`.
 //! - [`listing`] -- the deferred whole-image Listing tier (decode/classify/
 //!   xref walk) and its consumer queries.
+//! - [`kuna_imageview`] -- the image a whole-image walk reads, over an object
+//!   file or a memory map.
 //! - [`pass`] / [`passes`] -- the [`pass::AnalysisPass`] interface (a focused,
 //!   additive, never-failing producer of facts) and the default pass roster.
 //! - [`upx`] -- static unpacking of UPX-packed executables. Not a pass: it runs
@@ -58,6 +60,7 @@ pub mod loadimage_mz;
 pub mod loader;
 pub mod analyzers;
 pub mod listing;
+pub mod kuna_imageview;
 pub mod upx;
 pub mod neolite;
 pub mod pklite;

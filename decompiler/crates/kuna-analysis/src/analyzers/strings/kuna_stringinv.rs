@@ -62,6 +62,8 @@
 
 use object::read::{Object, ObjectSection, ObjectSegment};
 
+use crate::kuna_imageview::ImageView;
+
 use super::kuna_utf8strings::scan_utf8_runs;
 use super::kuna_widestrings::scan_utf16_runs;
 use super::{is_loaded_initialized, scan_runs, Run};
@@ -282,7 +284,24 @@ fn utf16_text(bytes: &[u8]) -> String {
 /// committed either way: this is a read-only query over the parsed object, so no
 /// invocation of the engine can change because of it.
 pub fn inventory(file: &object::File, q: &Query) -> Inventory {
-    inventory_with_ranges(file, q, None)
+    inventory_in(&crate::kuna_imageview::ObjectView::new(file), q)
+}
+
+/// [`inventory`] over any image ([`ImageView`]). A view with no object file
+/// scans each of its regions that holds bytes, by the region's name.
+pub fn inventory_in(view: &dyn ImageView, q: &Query) -> Inventory {
+    if let Some(file) = view.object() {
+        return inventory_with_ranges(file, q, None);
+    }
+    let regions = view
+        .regions()
+        .into_iter()
+        .filter_map(|r| {
+            let data = r.bytes.filter(|d| !d.is_empty())?;
+            Some(Region { name: r.name.map(str::to_string), vma: r.address, data })
+        })
+        .collect();
+    scan(regions, q, false)
 }
 
 /// Scan only regions wholly contained in the loader's mapped image.
@@ -297,7 +316,11 @@ fn inventory_with_ranges(file: &object::File, q: &Query, ranges: Option<&[(u64, 
     if let Some(ranges) = ranges {
         retain_within(&mut regions, ranges);
     }
+    scan(regions, q, from_segments)
+}
 
+/// The rows `q` finds in `regions`.
+fn scan(regions: Vec<Region<'_>>, q: &Query, from_segments: bool) -> Inventory {
     let mut runs: Vec<(Run, Encoding)> = Vec::new();
     // One reading answers the 1-byte width. The UTF-8 one is a superset of the
     // ASCII one — every ASCII run is a subrange of a UTF-8 run — so running both

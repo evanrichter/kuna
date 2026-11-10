@@ -186,7 +186,7 @@ pub(super) struct Machine<'a> {
 
 impl<'a> Machine<'a> {
     pub(super) fn new(
-        file: &object::File<'a>,
+        view: &'a dyn crate::kuna_imageview::ImageView,
         reg: Option<&Rc<AddrSpace>>,
         data_space: Option<&Rc<AddrSpace>>,
         preserved: &'a [(u64, u64)],
@@ -198,9 +198,11 @@ impl<'a> Machine<'a> {
         if mapped.is_empty() {
             return None;
         }
-        let pc_only = file.format() == object::BinaryFormat::Elf
-            && file.kind() == object::ObjectKind::Dynamic
-            && !matches!(file.architecture(), object::Architecture::X86_64 | object::Architecture::Aarch64);
+        let pc_only = view.object().is_some_and(|file| {
+            file.format() == object::BinaryFormat::Elf
+                && file.kind() == object::ObjectKind::Dynamic
+                && !matches!(file.architecture(), object::Architecture::X86_64 | object::Architecture::Aarch64)
+        });
         Some(Machine {
             big_endian: reg.is_big_endian(),
             reg,
@@ -210,8 +212,8 @@ impl<'a> Machine<'a> {
             preserved,
             mapped,
             pool,
-            ptr: if file.is_64() { 8 } else { 4 },
-            code: code(file),
+            ptr: view.pointer_width(),
+            code: code(view),
         })
     }
 
@@ -240,20 +242,31 @@ impl<'a> Machine<'a> {
 }
 
 /// An AArch64 image's executable sections, which an `adrp` is read from.
-fn code<'a>(file: &object::File<'a>) -> Option<PoolImage<'a>> {
+fn code<'a>(view: &'a dyn crate::kuna_imageview::ImageView) -> Option<PoolImage<'a>> {
     use object::{Object, ObjectSection};
-    if !matches!(file.architecture(), object::Architecture::Aarch64 | object::Architecture::Aarch64_Ilp32) {
+    if !matches!(view.architecture(), object::Architecture::Aarch64 | object::Architecture::Aarch64_Ilp32) {
         return None;
     }
-    let ranges = file
-        .sections()
-        .filter(crate::entry::is_executable)
-        .filter_map(|sec| {
-            let data = sec.data().ok().filter(|d| !d.is_empty())?;
-            let lo = sec.address();
-            Some((lo, lo.saturating_add(sec.size().min(data.len() as u64)), data))
-        })
-        .collect();
+    let ranges = match view.object() {
+        Some(file) => file
+            .sections()
+            .filter(crate::entry::is_executable)
+            .filter_map(|sec| {
+                let data = sec.data().ok().filter(|d| !d.is_empty())?;
+                let lo = sec.address();
+                Some((lo, lo.saturating_add(sec.size().min(data.len() as u64)), data))
+            })
+            .collect(),
+        None => view
+            .regions()
+            .into_iter()
+            .filter(|r| r.code)
+            .filter_map(|r| {
+                let data = r.bytes?;
+                Some((r.address, r.address.saturating_add(r.size.min(data.len() as u64)), data))
+            })
+            .collect(),
+    };
     PoolImage::from_ranges(ranges, 8, true)
 }
 

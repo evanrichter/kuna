@@ -1221,7 +1221,7 @@ pub fn raw_arm_prologue_seeds(
     arch: &kuna_decomp::architecture::Architecture, translate: &dyn Translate,
     code_space: Rc<AddrSpace>, exec_ranges: &[(u64, u64)],
 ) -> Vec<u64> {
-    raw_arm_frames(file, listing, arch, translate, code_space, exec_ranges, false, None).roots
+    raw_arm_frames(&crate::kuna_imageview::ObjectView::new(file), listing, arch, translate, code_space, exec_ranges, false, None).roots
 }
 
 pub fn raw_thumb_prologue_seeds(
@@ -1238,7 +1238,7 @@ pub fn raw_thumb_prologue_seeds(
 /// that recovery; reference walks (`capture_xrefs`) keep replayable p-code.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn raw_arm_frames(
-    file: &object::File,
+    view: &dyn crate::kuna_imageview::ImageView,
     listing: &Listing,
     arch: &kuna_decomp::architecture::Architecture,
     translate: &dyn Translate,
@@ -1247,8 +1247,7 @@ pub(crate) fn raw_arm_frames(
     capture_xrefs: bool,
     memo: Option<&Rc<crate::listing::kuna_decodememo::DecodeMemo>>,
 ) -> ArmFrames {
-    use object::read::Object;
-    if file.architecture() != object::Architecture::Arm {
+    if view.architecture() != object::Architecture::Arm {
         return ArmFrames::default();
     }
 
@@ -1272,7 +1271,7 @@ pub(crate) fn raw_arm_frames(
     // `claimed` body-dedup sees a real function's entry before any prologue-shaped
     // byte-pair in its interior.
     let mut candidates: BTreeSet<u64> = BTreeSet::new();
-    for (sec_addr, _sec_hi, data) in crate::entry::executable_sections(file) {
+    for (sec_addr, _sec_hi, data) in crate::kuna_imageview::executable_sections(view) {
         // Snap to the first even (2-byte-aligned) VMA in the section, then stride
         // by two; the mode-aware matcher additionally requires ARM word alignment.
         let mut off = (sec_addr as usize) & 1;

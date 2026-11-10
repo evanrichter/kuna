@@ -43,13 +43,13 @@ use super::xrefs::{decode, in_range, FullCapture, FullOp};
 /// forms begin.
 const A32_PC_OFFSET: u64 = 8;
 
-/// Whether A32 tables are read in `file`: `armframes` recovery is on and it is
+/// Whether A32 tables are read in `view`: `armframes` recovery is on and it is
 /// a linked ARM image.
-pub(crate) fn applies(file: &object::File<'_>, arch: &kuna_decomp::architecture::Architecture) -> bool {
+pub(crate) fn applies(view: &dyn crate::kuna_imageview::ImageView, arch: &kuna_decomp::architecture::Architecture) -> bool {
     use object::Object;
     arch.analysis_armframes
-        && file.architecture() == object::Architecture::Arm
-        && file.kind() != object::ObjectKind::Relocatable
+        && view.architecture() == object::Architecture::Arm
+        && view.object().is_none_or(|file| file.kind() != object::ObjectKind::Relocatable)
 }
 
 /// The read-only image an A32 word table is read from.

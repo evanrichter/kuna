@@ -14,6 +14,7 @@ use kuna_sleigh::loadimage::section_flags;
 
 use crate::disasm::{self, mapped_run_end, Row, Window};
 use crate::engine::ConsoleProgram;
+use kuna_analysis::kuna_imageview::{ImageView, ObjectView};
 
 /// How many rows [`function_rows`] lists before it reports a truncated listing.
 pub const FUNCTION_ROW_CAP: usize = 4096;
@@ -290,13 +291,21 @@ pub struct StringUse {
 /// one behind [`function_xrefs`], built once for the whole set. Each list is in
 /// instruction order.
 pub fn string_uses(prog: &ConsoleProgram, file: &object::File, strings: &[(u64, u64)]) -> Vec<Vec<StringUse>> {
+    string_uses_in(prog, &ObjectView::new(file), strings)
+}
+
+/// [`string_uses`] over any image ([`ImageView`]), such as a memory map's
+/// ([`ConsoleProgram::image_view`]). A view with no object file reads its code
+/// from the code regions and its pointer slots from the other regions that
+/// hold bytes.
+pub fn string_uses_in(prog: &ConsoleProgram, view: &dyn ImageView, strings: &[(u64, u64)]) -> Vec<Vec<StringUse>> {
     use kuna_analysis::listing::xrefs as xr;
     if strings.is_empty() {
         return Vec::new();
     }
-    let walk = UseWalk::build(prog, file);
+    let walk = UseWalk::build(prog, view);
     let pointed = strings.iter().map(|&(addr, _)| addr).filter(|&addr| addr != 0 && !walk.in_code(addr)).collect();
-    let slots = pointer_slots(file, &pointed);
+    let slots = pointer_slots(view, &pointed);
     strings
         .iter()
         .map(|&(addr, len)| {
@@ -337,7 +346,8 @@ pub fn data_uses(
     if start >= end {
         return Vec::new();
     }
-    let walk = UseWalk::build(prog, file);
+    let view = ObjectView::new(file);
+    let walk = UseWalk::build(prog, &view);
     let mut uses: Vec<(u64, StringUse)> = Vec::new();
     for vma in (start..end).filter(|&vma| !walk.is_entry(vma)) {
         let code_data = walk.in_code(vma);
@@ -353,7 +363,7 @@ pub fn data_uses(
         .chain(uses.iter().map(|(to, _)| *to))
         .filter(|&addr| addr != 0 && addr >= start && addr < end && !walk.in_code(addr) && !walk.is_entry(addr))
         .collect();
-    for (&target, list) in &pointer_slots(file, &pointed) {
+    for (&target, list) in &pointer_slots(&view, &pointed) {
         for &slot in list.iter().filter(|&&slot| slot != target) {
             uses.extend(walk.index.refs_to(slot).iter().filter(|r| is_data(r)).map(|r| (target, walk.use_of(r, Some(slot)))));
         }
@@ -378,7 +388,7 @@ struct UseWalk {
 }
 
 impl UseWalk {
-    fn build(prog: &ConsoleProgram, file: &object::File) -> Self {
+    fn build(prog: &ConsoleProgram, view: &dyn ImageView) -> Self {
         use kuna_analysis::listing::xrefs as xr;
         use object::{Object, ObjectSection, SectionKind};
         let names: BTreeMap<u64, String> = prog
@@ -389,13 +399,16 @@ impl UseWalk {
         let data: BTreeMap<u64, String> =
             prog.global_data_symbols().into_iter().map(|(name, vma, _)| (vma, name)).collect();
         let inventory: Vec<u64> = names.keys().copied().collect();
-        let seeds = xr::discovery_seeds(file, &inventory, prog.arch().analysis_funcstart_patterns);
-        let index = xr::build(file, prog.arch(), prog.arch().translate(), &seeds);
-        let code = file
-            .sections()
-            .filter(|s| s.kind() == SectionKind::Text)
-            .map(|s| (s.address(), s.address().saturating_add(s.size())))
-            .collect();
+        let seeds = xr::discovery_seeds_in(view, &inventory, prog.arch().analysis_funcstart_patterns);
+        let index = xr::build_in(view, prog.arch(), prog.arch().translate(), &seeds);
+        let code = match view.object() {
+            Some(file) => file
+                .sections()
+                .filter(|s| s.kind() == SectionKind::Text)
+                .map(|s| (s.address(), s.address().saturating_add(s.size())))
+                .collect(),
+            None => view.regions().iter().filter(|r| r.code).map(|r| (r.address, r.end())).collect(),
+        };
         UseWalk { names, data, index, code }
     }
 
@@ -423,23 +436,29 @@ impl UseWalk {
     }
 }
 
-/// The pointer-aligned words of `file`'s initialized data sections whose value
-/// is one of `targets`, keyed by that value. Words are read at the image's
-/// pointer width and byte order, as the file stores them.
-fn pointer_slots(file: &object::File, targets: &BTreeSet<u64>) -> BTreeMap<u64, Vec<u64>> {
+/// The pointer-aligned words of the image's initialized data whose value is
+/// one of `targets`, keyed by that value: an object file's data sections, or
+/// another view's regions that hold bytes and no code. Words are read at the
+/// image's pointer width and byte order, as the image stores them.
+fn pointer_slots(view: &dyn ImageView, targets: &BTreeSet<u64>) -> BTreeMap<u64, Vec<u64>> {
     use object::{Object, ObjectSection, SectionKind};
-    let width: u64 = if file.is_64() { 8 } else { 4 };
-    let little = file.is_little_endian();
+    let data: Vec<(u64, &[u8])> = match view.object() {
+        Some(file) => file
+            .sections()
+            .filter(|section| {
+                matches!(
+                    section.kind(),
+                    SectionKind::Data | SectionKind::ReadOnlyData | SectionKind::ReadOnlyDataWithRel
+                )
+            })
+            .filter_map(|section| Some((section.address(), section.data().ok()?)))
+            .collect(),
+        None => view.regions().into_iter().filter(|r| !r.code).filter_map(|r| Some((r.address, r.bytes?))).collect(),
+    };
+    let width = u64::from(view.pointer_width());
+    let little = view.is_little_endian();
     let mut out: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
-    for section in file.sections() {
-        if !matches!(
-            section.kind(),
-            SectionKind::Data | SectionKind::ReadOnlyData | SectionKind::ReadOnlyDataWithRel
-        ) {
-            continue;
-        }
-        let Ok(bytes) = section.data() else { continue };
-        let base = section.address();
+    for (base, bytes) in data {
         let skip = (width - base % width) % width;
         let Some(aligned) = bytes.get(skip as usize..) else { continue };
         for (i, word) in aligned.chunks_exact(width as usize).enumerate() {

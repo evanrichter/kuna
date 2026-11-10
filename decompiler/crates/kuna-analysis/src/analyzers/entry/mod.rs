@@ -355,6 +355,25 @@ pub fn full_pattern_starts(file: &object::File) -> Vec<u64> {
     out
 }
 
+/// [`full_pattern_starts`] over any image. A view with no object file has no
+/// symbols, so every pattern start in a code region is new.
+pub(crate) fn full_pattern_starts_in(view: &dyn crate::kuna_imageview::ImageView) -> Vec<u64> {
+    if let Some(file) = view.object() {
+        return full_pattern_starts(file);
+    }
+    let Some(set) = patterns::for_arch(view.architecture(), view.is_little_endian()) else {
+        return Vec::new();
+    };
+    let mut out: Vec<u64> = crate::kuna_imageview::executable_sections(view)
+        .iter()
+        .flat_map(|(addr, _hi, data)| set.scan(*addr, data))
+        .filter(|&vma| vma != 0)
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 /// The extents of every defined function symbol that states its size, as
 /// `(start, furthest end of any extent starting at or before it)` sorted by
 /// start. A prologue shape inside one (a shrink-wrapped prologue after an early
