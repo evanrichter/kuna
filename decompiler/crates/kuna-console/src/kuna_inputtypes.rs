@@ -10,6 +10,11 @@
 //! with the changed scope carried across. Nothing
 //! is left on the program: the next decompile without inputs prints what it
 //! printed before.
+//!
+//! [`ConsoleProgram::decompile_with_input_and_local_types`] also retypes
+//! locals. A caller that keys locals by facts of its own reads the first
+//! pass's function, maps its keys to the names that pass printed, and the
+//! retype goes through the `type` directive's path for each name.
 
 use std::rc::Rc;
 
@@ -34,6 +39,11 @@ pub enum InputTypeOutcome {
     Rejected(String),
 }
 
+/// Names the locals to retype in a first pass's function, as that pass
+/// printed them, each with its type
+/// ([`ConsoleProgram::decompile_with_input_and_local_types`]).
+pub type LocalTypes<'a> = dyn FnMut(&mut Architecture, &Funcdata) -> Vec<(String, Rc<Datatype>)> + 'a;
+
 impl ConsoleProgram {
     /// Decompile `entry` with each `(storage, type)` input retyping the
     /// parameter that lives in `storage` at entry, keeping the other
@@ -49,13 +59,42 @@ impl ConsoleProgram {
         entry: &FunctionEntry,
         inputs: &[(Address, Rc<Datatype>)],
     ) -> KunaResult<(Funcdata, Vec<InputTypeOutcome>)> {
+        self.decompile_inputs(entry, inputs, None).map(|(fd, outcomes, _)| (fd, outcomes))
+    }
+
+    /// [`ConsoleProgram::decompile_with_input_types`] that also retypes locals.
+    /// After the first pass, `locals` reads that pass's function (it may print
+    /// it with the architecture it is given) and names each local to retype as
+    /// the pass printed it, with its type. Each is applied as the `type`
+    /// directive applies `type <name> <decl>` on that output, so a register
+    /// local takes a type of its own width, and a structure, union or array may
+    /// grow a stack local over the frame, over the locals beside it. The second
+    /// pass always runs, and the function comes back with the inputs' outcomes
+    /// and one outcome per local `locals` named, in its order. A local is
+    /// rejected for the reason the directive would give, or when `locals`
+    /// names it twice.
+    pub fn decompile_with_input_and_local_types(
+        &mut self,
+        entry: &FunctionEntry,
+        inputs: &[(Address, Rc<Datatype>)],
+        locals: &mut LocalTypes<'_>,
+    ) -> KunaResult<(Funcdata, Vec<InputTypeOutcome>, Vec<InputTypeOutcome>)> {
+        self.decompile_inputs(entry, inputs, Some(locals))
+    }
+
+    fn decompile_inputs(
+        &mut self,
+        entry: &FunctionEntry,
+        inputs: &[(Address, Rc<Datatype>)],
+        locals: Option<&mut LocalTypes<'_>>,
+    ) -> KunaResult<(Funcdata, Vec<InputTypeOutcome>, Vec<InputTypeOutcome>)> {
         let _load = self.arch().load_scope();
         self.forget_synthesized_structs()?;
         let vma = entry.addr.get_offset();
         let mapped = self.dwarf_locals_for(vma);
         let declared = self.declared_extent(vma);
         let flow = self.noreturn_flow_overrides(&entry.addr);
-        let replay = !inputs.is_empty();
+        let replay = !inputs.is_empty() || locals.is_some();
         self.arch_mut().kuna_record_names = replay;
         let first = decompile_one(
             self.arch_mut(),
@@ -81,8 +120,25 @@ impl ConsoleProgram {
                 Err(reason) => InputTypeOutcome::Rejected(reason),
             });
         }
-        if !outcomes.contains(&InputTypeOutcome::Applied) {
-            return Ok((fd, outcomes));
+        let mut local_outcomes = Vec::new();
+        if let Some(locals) = locals {
+            let named = locals(self.arch_mut(), &fd);
+            let maxduplicates = kuna_decomp::kuna_dynamichashmax::MAX_DUPLICATES;
+            for (i, (name, ct)) in named.iter().enumerate() {
+                let outcome = if named[..i].iter().any(|(earlier, _)| earlier == name) {
+                    Err(format!("Another input already types {name}"))
+                } else {
+                    crate::kuna_hightarget::apply_local(&mut fd, name, "", Some(Rc::clone(ct)), maxduplicates, Some(self.arch()))
+                        .map(|_| ())
+                };
+                local_outcomes.push(match outcome {
+                    Ok(()) => InputTypeOutcome::Applied,
+                    Err(reason) => InputTypeOutcome::Rejected(reason),
+                });
+            }
+        }
+        if !outcomes.contains(&InputTypeOutcome::Applied) && !local_outcomes.contains(&InputTypeOutcome::Applied) {
+            return Ok((fd, outcomes, local_outcomes));
         }
 
         let carried = crate::assertions::carried_symbols(&fd);
@@ -121,7 +177,7 @@ impl ConsoleProgram {
                 ));
             }
         }
-        Ok((fd, outcomes))
+        Ok((fd, outcomes, local_outcomes))
     }
 
     /// The `CALL_RETURN` flow overrides the whole-binary loop seeds at the

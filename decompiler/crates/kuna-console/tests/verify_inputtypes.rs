@@ -1,6 +1,8 @@
 //! `ConsoleProgram::decompile_with_input_types` retypes a parameter found by its
 //! storage at entry, keeps the other parameters, reports one outcome per input,
 //! and leaves nothing behind for the next decompile.
+//! `decompile_with_input_and_local_types` also retypes locals by the names the
+//! first pass printed.
 //!
 //! The fixture `libwire_x86_64.so` is a `-O1` shared library whose functions
 //! take a `struct Request *` in `RDI` (see its `.c`); `libwire_i386.so` is its
@@ -169,4 +171,46 @@ fn a_stack_parameter_is_found_by_its_offset_at_entry() {
     assert!(matches!(&outcomes[2], InputTypeOutcome::Rejected(reason) if reason.contains("stack-0x8")), "{outcomes:?}");
     assert!(signature(&code, "init_request").contains("(Request *a0,unsigned int a1,char *a2,"), "in:\n{code}");
     assert!(code.contains("a0->payload = a2"), "in:\n{code}");
+}
+
+/// Decompile `func` retyping the locals the first pass printed as each name,
+/// and return its C, the first pass's C, and the local outcomes.
+fn decompile_locals(prog: &mut ConsoleProgram, func: &str, locals: &[(&str, &str)]) -> (String, String, Vec<InputTypeOutcome>) {
+    let entry = prog.find_entry_by_name(func).expect("function in fixture");
+    let locals: Vec<(String, Rc<Datatype>)> =
+        locals.iter().map(|(name, decl)| (name.to_string(), ctype(prog, decl))).collect();
+    let mut first = String::new();
+    let mut name_locals = |arch: &mut kuna_decomp::architecture::Architecture, fd: &kuna_decomp::funcdata::Funcdata| {
+        first = print_c(arch, fd);
+        locals.clone()
+    };
+    let (fd, outcomes, local_outcomes) =
+        prog.decompile_with_input_and_local_types(&entry, &[], &mut name_locals).expect("decompile succeeds");
+    assert!(outcomes.is_empty());
+    (print_c(prog.arch_mut(), &fd), first, local_outcomes)
+}
+
+#[test]
+fn a_local_named_as_the_first_pass_printed_it_is_retyped() {
+    let mut prog = libwire();
+    let (untyped, _) = decompile(&mut prog, "checksum", &[]);
+    assert!(untyped.contains("uint1 *v2;"), "in:\n{untyped}");
+    let (code, first, outcomes) = decompile_locals(&mut prog, "checksum", &[("v2", "char *")]);
+    assert_eq!(first, untyped, "the first pass is the untyped decompile");
+    assert_eq!(outcomes, [InputTypeOutcome::Applied], "in:\n{code}");
+    assert!(code.contains("char *v2;"), "in:\n{code}");
+}
+
+#[test]
+fn a_local_of_another_width_a_missing_name_and_a_repeat_are_rejected() {
+    let mut prog = libwire();
+    let (untyped, _) = decompile(&mut prog, "checksum", &[]);
+    let (code, _, outcomes) =
+        decompile_locals(&mut prog, "checksum", &[("v2", "uint2"), ("v99", "uint4"), ("v1", "int4"), ("v1", "uint4")]);
+    assert!(matches!(&outcomes[0], InputTypeOutcome::Rejected(reason) if reason.contains("8 bytes")), "{outcomes:?}");
+    assert!(matches!(&outcomes[1], InputTypeOutcome::Rejected(reason) if reason.contains("v99")), "{outcomes:?}");
+    assert_eq!(outcomes[2], InputTypeOutcome::Applied, "in:\n{code}");
+    assert!(matches!(&outcomes[3], InputTypeOutcome::Rejected(reason) if reason.contains("v1")), "{outcomes:?}");
+    let (after, _) = decompile(&mut prog, "checksum", &[]);
+    assert_eq!(after, untyped, "the retype changed the next untyped decompile");
 }
