@@ -484,8 +484,11 @@ fn arm_exports_are_proven_and_pointer_only_thumb_keeps_its_mode() {
 /// `blx` below them wrote: by default every function decompiles without a bad
 /// decode, including the Thumb bodies after an A32 export a later `blx` write
 /// at that export would otherwise reach; with `armwalkmode off` some do not.
+/// The control also turns `armfuncmode` off: it paints the Thumb functions
+/// behind the stubs, which on its own leaves `-O2` with no bad decode.
 #[test]
 fn whole_binary_decompile_of_gcc_interworking_objects_has_no_bad_decode() {
+    const CONTROL: [&str; 6] = ["--option", "armwalkmode", "off", "--option", "armfuncmode", "off"];
     for name in [
         "arm_interwork_stubs_o0_le32",
         "arm_interwork_stubs_o2_le32",
@@ -495,7 +498,7 @@ fn whole_binary_decompile_of_gcc_interworking_objects_has_no_bad_decode() {
         let lib = path.to_str().unwrap();
         let all = kuna(&["decompile-all", lib]);
         assert!(!all.contains("halt_"), "{name}: {all}");
-        assert!(run(&["decompile-all", lib], &WALK_OFF).contains("halt_"), "{name}");
+        assert!(run(&["decompile-all", lib], &CONTROL).contains("halt_"), "{name}");
     }
 }
 

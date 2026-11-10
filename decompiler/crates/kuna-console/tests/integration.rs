@@ -557,3 +557,6 @@ mod verify_xref_rebuild;
 
 #[path = "verify_xref_walkmode.rs"]
 mod verify_xref_walkmode;
+
+#[path = "verify_veneer_mode.rs"]
+mod verify_veneer_mode;
