@@ -571,5 +571,8 @@ mod verify_rustprobestack;
 #[path = "verify_operandpieces.rs"]
 mod verify_operandpieces;
 
+#[path = "verify_xref_rebuild.rs"]
+mod verify_xref_rebuild;
+
 #[path = "verify_bootstrap.rs"]
 mod verify_bootstrap;
