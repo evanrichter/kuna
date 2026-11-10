@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Barrier, Mutex};
 
 use kuna_console::engine::{
-    bootstrap_from_object, bootstrap_from_object_with_options, ConsoleProgram,
+    bootstrap_from_image, bootstrap_from_object, bootstrap_from_object_with_options, ArmIsa,
+    Bootstrap, ConsoleProgram, ARM_ISA_ENV,
 };
 use kuna_decomp::kuna_loadoptions::LoadOptions;
 use kuna_decomp::kuna_sourcelang::SourceLang;
@@ -436,4 +437,73 @@ fn an_environment_program_reads_the_environment_live() {
         "the declaration read the environment's bound"
     );
     assert!(explicit.has_symbol_named("outer::inner::renamed"));
+}
+
+/// A `Bootstrap` without options reads the environment as the entry points
+/// that take none do: its load options, and an unset ISA from
+/// `KUNA_ARM_ISA`. With options, it reads neither, so a bad `KUNA_ARM_ISA`
+/// cannot fail it.
+#[test]
+fn a_bootstrap_without_options_reads_the_environment() {
+    use kuna_analysis::loadimage_te::synthetic::TeImage;
+    use kuna_decomp::decompile_drive::print_c;
+
+    fn first_function(load: kuna_base::error::KunaResult<ConsoleProgram>) -> String {
+        let mut prog = load.expect("bootstrap");
+        prog.commit_pending_analysis().unwrap();
+        let entry = prog.function_entries_executable()[0].clone();
+        let (fd, _) = prog.decompile_with_input_types(&entry, &[]).unwrap();
+        print_c(prog.arch_mut(), &fd)
+    }
+
+    struct ClearOnDrop;
+    impl Drop for ClearOnDrop {
+        fn drop(&mut self) {
+            std::env::remove_var(ARM_ISA_ENV);
+            for name in ENV_VARS {
+                std::env::remove_var(name);
+            }
+        }
+    }
+
+    let _env = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
+    let _clear = ClearOnDrop;
+    let specs = [specs()];
+    let roots = Bootstrap::new(&specs);
+    let te = common::scratch_file("loadoptions-te", "te");
+    std::fs::write(&te, TeImage::arm(&[0x07, 0x20, 0x70, 0x47, 0x1e, 0xff, 0x2f, 0xe1]).build()).unwrap();
+    let te = te.to_str().unwrap();
+    let options = LoadOptions::default();
+
+    std::env::set_var(ARM_ISA_ENV, "thumb");
+    let legacy = first_function(bootstrap_from_image(te, "", &specs));
+    assert!(legacy.contains("return 7"), "{legacy}");
+    assert_eq!(first_function(roots.image(te)), legacy);
+    assert_eq!(first_function(roots.isa(Some(ArmIsa::Thumb)).image(te)), legacy);
+    let explicit = first_function(roots.options(&options).image(te));
+    assert_eq!(explicit, first_function(roots.isa(None).options(&options).image(te)));
+    assert_ne!(explicit, legacy, "an explicit load ignored KUNA_ARM_ISA");
+
+    std::env::set_var(ARM_ISA_ENV, "bogus");
+    let refused = |load: kuna_base::error::KunaResult<ConsoleProgram>| match load {
+        Ok(_) => panic!("loaded with KUNA_ARM_ISA=bogus"),
+        Err(err) => err.to_string(),
+    };
+    let err = refused(bootstrap_from_image(te, "", &specs));
+    assert!(err.contains("invalid --isa"), "{err}");
+    assert_eq!(refused(roots.image(te)), err);
+    assert_eq!(first_function(roots.options(&options).image(te)), explicit);
+    std::env::remove_var(ARM_ISA_ENV);
+    std::fs::remove_file(te).unwrap();
+
+    let go = go_image();
+    std::env::set_var("KUNA_GOABI", "off");
+    let mut prog = roots.object(go.to_str().unwrap()).unwrap();
+    prog.commit_pending_analysis().unwrap();
+    assert_eq!(compiler(&prog), "gcc");
+    assert_eq!(std::env::var("KUNA_GOVERSION").as_deref(), Ok("1.25"));
+    let mut prog = roots.options(&options).object(go.to_str().unwrap()).unwrap();
+    prog.commit_pending_analysis().unwrap();
+    assert_eq!(compiler(&prog), "golang");
+    std::fs::remove_file(go).unwrap();
 }
