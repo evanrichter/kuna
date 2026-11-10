@@ -38,6 +38,7 @@ pub mod kuna_callwide;
 pub mod kuna_declaredbytes;
 pub mod kuna_lazyfuncs;
 mod kuna_paramasserts;
+mod kuna_memorymap;
 pub mod kuna_inputtypes;
 pub mod kuna_localstructs;
 mod kuna_dwarfstack;

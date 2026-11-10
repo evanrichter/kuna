@@ -29,6 +29,8 @@ mod verify_inputtypes;
 mod verify_protoclear;
 #[path = "verify_localstructs.rs"]
 mod verify_localstructs;
+#[path = "verify_memory_map.rs"]
+mod verify_memory_map;
 #[path = "verify_language_database.rs"]
 mod verify_language_database;
 #[path = "verify_memoryspecs.rs"]

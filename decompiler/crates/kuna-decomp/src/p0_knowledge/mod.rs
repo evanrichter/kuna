@@ -51,6 +51,8 @@ pub mod kuna_dwarfstructs;
 // (load-time, env-bridged).
 pub mod kuna_libctypes;
 pub mod kuna_loadoptions;
+// (kuna) The memory map of a headerless image (`bootstrap_from_memory_map_*`).
+pub mod kuna_loadmap;
 // (kuna) DWARF variant-part (discriminated-union) import option gate
 // (load-time, env-bridged) plus the recovered-layout side table.
 pub mod kuna_dwarfvariants;
