@@ -171,6 +171,7 @@ fn firmware_map() -> LoadMap {
             entry(0x40, "wait_ram"),
             entry(0x50, "main"),
         ],
+        vector_tables: Vec::new(),
     }
 }
 

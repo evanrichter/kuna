@@ -154,6 +154,7 @@ fn flash_map(size: u64) -> LoadMap {
             address: 0x0800_0000,
             name: Some("seven".into()),
         }],
+        vector_tables: Vec::new(),
     }
 }
 

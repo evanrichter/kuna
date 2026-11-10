@@ -26,6 +26,8 @@ mod setup_commands;
 
 #[path = "verify_memory_map.rs"]
 mod verify_memory_map;
+#[path = "verify_map_vectors.rs"]
+mod verify_map_vectors;
 #[path = "verify_language_database.rs"]
 mod verify_language_database;
 #[path = "verify_memoryspecs.rs"]

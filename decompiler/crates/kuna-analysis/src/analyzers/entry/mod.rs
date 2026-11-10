@@ -95,6 +95,7 @@ pub mod kuna_machomain;
 pub mod kuna_unwindinfo;
 pub mod kuna_pemain;
 pub mod kuna_cortexmvectors;
+pub mod kuna_mapvectors;
 pub mod kuna_coldentry;
 pub mod kuna_fdeinterior;
 pub mod kuna_pdatainterior;
@@ -1511,10 +1512,31 @@ fn harvest_vector_slots(
     in_exec: &dyn Fn(u64) -> bool,
     relocated: bool,
 ) -> Vec<u64> {
-    let mut out: Vec<u64> = Vec::new();
+    harvest_vector_slot_targets(sec_addr, data, le, in_exec, relocated, None)
+        .into_iter()
+        .map(|(_, target)| target)
+        .collect()
+}
+
+/// (kuna) [`harvest_vector_slots`] with each handler's slot number: `(slot,
+/// target)` pairs in table order. With `slots` set, the loop reads exactly
+/// that many slots (bounded by `data`), skips any word that is not a handler,
+/// and ignores the start-of-code stop: the caller has stated where the table
+/// ends.
+fn harvest_vector_slot_targets(
+    sec_addr: u64,
+    data: &[u8],
+    le: bool,
+    in_exec: &dyn Fn(u64) -> bool,
+    relocated: bool,
+    slots: Option<usize>,
+) -> Vec<(usize, u64)> {
+    let mut out: Vec<(usize, u64)> = Vec::new();
     let mut min_target = u64::MAX;
+    let limit = slots.unwrap_or(CORTEXM_MAX_VECTORS);
     let mut i = 1usize; // skip word 0 (the initial SP)
-    while i < CORTEXM_MAX_VECTORS {
+    while i < limit {
+        let slot = i;
         let off = i * 4;
         if off + 4 > data.len() {
             break;
@@ -1522,7 +1544,7 @@ fn harvest_vector_slots(
         let vma = sec_addr + off as u64;
         // Once the scan reaches the lowest handler address, the table has ended and
         // we would be reading real instructions — stop ("up to the start of code").
-        if vma >= min_target && (!relocated || min_target >= sec_addr) {
+        if slots.is_none() && vma >= min_target && (!relocated || min_target >= sec_addr) {
             break;
         }
         let word = read_u32(&data[off..], le) as u64;
@@ -1537,12 +1559,15 @@ fn harvest_vector_slots(
         // stop (a contiguous {zero | Thumb-handler} run defines the table).
         let target = word & !1;
         if word & 1 == 0 || !in_exec(target) {
+            if slots.is_some() {
+                continue;
+            }
             break;
         }
         if target < min_target {
             min_target = target;
         }
-        out.push(target);
+        out.push((slot, target));
     }
     out
 }
