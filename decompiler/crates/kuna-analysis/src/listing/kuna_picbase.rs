@@ -616,7 +616,8 @@ fn establish(
 /// Every seed's prologue is probed; the answer stands only if each idiom that
 /// fires agrees on one register and that register's value is the image's own
 /// `_GLOBAL_OFFSET_TABLE_`. Disagreement is treated as "this is not the ABI's
-/// GOT register" and claims nothing.
+/// GOT register" and claims nothing. The probe decodes in a private context, so
+/// no decode mode a prologue's `globalset` writes reaches the walk.
 pub(super) fn detect(
     file: &object::File,
     translate: &dyn Translate,
@@ -625,6 +626,7 @@ pub(super) fn detect(
     seeds: &std::collections::BTreeSet<u64>,
 ) -> Option<PicBase> {
     let got = got_base(file)?;
+    let _probe = translate.context_scope();
     let mut thunks: HashMap<u64, Option<VarnodeData>> = HashMap::new();
     let mut found: Option<VarnodeData> = None;
     let never = |_: u64| false;

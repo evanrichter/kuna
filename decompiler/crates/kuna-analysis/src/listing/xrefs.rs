@@ -771,6 +771,12 @@ pub fn build_with_unflagged_focus(
 /// PC-relative operand names the dispatch itself rather than a table, and the
 /// predicated skip of such a jump, which stays one of its `flows`, files no row
 /// ([`super::classify::Classified::predicated_skip`]).
+///
+/// Only ARM frame recovery publishes decode modes, one instruction span at a
+/// time, with the decoder's own mode writes masked ([`super::kuna_walkcontext`]).
+/// Every other walk paints and decodes in a private copy of the context, restored
+/// on return: a `globalset` there writes a mode up to the next change point, past
+/// the code that called for it, and a later walk would read that mode.
 fn descend(
     view: &dyn ImageView,
     arch: &Architecture,
@@ -802,6 +808,12 @@ fn descend(
     let exec_set = range_union(exec.clone());
     let sections_are_runtime = !exec.is_empty() && seeds.iter().any(|&s| in_range(&exec_set, s));
     let mapped = if sections_are_runtime { range_union(crate::kuna_imageview::mapped_ranges(view)) } else { Vec::new() };
+
+    let preserve_bodies = sections_are_runtime
+        && arch.analysis_funcstart_patterns
+        && view.architecture() == object::Architecture::Arm;
+    let prologues = preserve_bodies && arch.analysis_armframes && arch.analysis_armframes_full;
+    let _private = (!prologues).then(|| translate.context_scope()).flatten();
 
     // Paint the decode-mode context (ARM `TMode` / MIPS `ISA_MODE`) before the
     // first decode, exactly as the Listing walk does — without it a Thumb
@@ -893,10 +905,6 @@ fn descend(
         .filter(|_| super::kuna_a32switch::applies(view, arch))
         .map(|pool| super::kuna_a32switch::A32Tables::new(arch, pool));
 
-    let preserve_bodies = sections_are_runtime
-        && arch.analysis_funcstart_patterns
-        && view.architecture() == object::Architecture::Arm;
-    let prologues = preserve_bodies && arch.analysis_armframes && arch.analysis_armframes_full;
     let mut st = State::new(&seed_set, measure || preserve_bodies);
 
     // Reused across every decode in the walk (see [`FullCapture`]).
