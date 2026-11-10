@@ -574,5 +574,8 @@ mod verify_operandpieces;
 #[path = "verify_xref_rebuild.rs"]
 mod verify_xref_rebuild;
 
+#[path = "verify_xref_walkmode.rs"]
+mod verify_xref_walkmode;
+
 #[path = "verify_bootstrap.rs"]
 mod verify_bootstrap;
