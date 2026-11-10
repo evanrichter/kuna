@@ -554,3 +554,6 @@ mod verify_wrapmain;
 
 #[path = "verify_xref_rebuild.rs"]
 mod verify_xref_rebuild;
+
+#[path = "verify_xref_walkmode.rs"]
+mod verify_xref_walkmode;

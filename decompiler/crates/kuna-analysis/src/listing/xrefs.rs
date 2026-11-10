@@ -776,7 +776,11 @@ pub fn build_with_unflagged_focus(
 /// time, with the decoder's own mode writes masked ([`super::kuna_walkcontext`]).
 /// Every other walk paints and decodes in a private copy of the context, restored
 /// on return: a `globalset` there writes a mode up to the next change point, past
-/// the code that called for it, and a later walk would read that mode.
+/// the code that called for it, and a later walk would read that mode. On ARM the
+/// private walk also carries each edge's mode past those writes
+/// ([`super::kuna_walkcontext::WalkContext::carrying`]), so a `blx` to a callee
+/// below its caller does not turn the rest of the caller into Thumb, and stops
+/// at a call to a no-return function.
 fn descend(
     view: &dyn ImageView,
     arch: &Architecture,
@@ -920,9 +924,11 @@ fn descend(
     let mut frame_candidates = Vec::new();
     let mut frame_cache = crate::aif::ArmFrames::default();
     let mut frame_partition = None;
-    let mut walk_context = super::kuna_walkcontext::WalkContext::new(
-        prologues, translate, arch, &code_space, &exec,
-    );
+    let mut walk_context = if prologues {
+        super::kuna_walkcontext::WalkContext::new(true, translate, arch, &code_space, &exec)
+    } else {
+        arm.then(|| super::kuna_walkcontext::WalkContext::carrying(translate, arch)).flatten()
+    };
     if arch.analysis_listing && arch.input_arm_isa_override {
         if let Some(context) = &mut walk_context {
             context.seed_inventory_modes(seed_set.iter().copied(), &arch.arm_inventory_modes);
@@ -1151,7 +1157,9 @@ fn descend(
         if !walked.insert(entry) {
             continue;
         }
-        let entry_mode = walk_context.as_ref().and_then(|context| context.entry(entry));
+        let entry_mode = walk_context.as_ref().and_then(|context| {
+            if prologues { context.entry(entry) } else { Some(context.start(arch, &code_space, entry)) }
+        });
         let mut insn_queue = VecDeque::from([(entry, entry_mode)]);
         let body_range = admitted.contains(&entry)
             .then(|| unflagged[unflagged.partition_point(|&(lo, _)| lo <= entry) - 1]);
@@ -1238,7 +1246,10 @@ fn descend(
             {
                 continue; // out of bounds (the `flow.rs` gate)
             }
-            let selection = super::kuna_walkcontext::InstructionMode::select(arch, translate, &code_space, vma, mode);
+            let selection = prologues
+                .then(|| super::kuna_walkcontext::InstructionMode::select(arch, translate, &code_space, vma, mode))
+                .flatten();
+            let _carried = walk_context.as_ref().filter(|_| !prologues).and_then(|context| context.read(mode));
             if let Some(contexts) = &mut fingerprint_contexts {
                 contexts.record(partition.len(), arch, &Address::new(Rc::clone(&code_space), vma), selection.as_ref());
             }
@@ -1347,14 +1358,16 @@ fn descend(
                     func_queue.push_back(target);
                 } else {
                     let target_mode = walk_context.as_ref()
-                        .and_then(|context| context.successor(target, mode, &commits));
+                        .and_then(|context| context.successor(target, context.carried(target, mode), &commits));
                     insn_queue.push_back((target, target_mode));
                 }
             }
-            if let Some(fall) = c.fall_through {
+            let halts = c.flow.is_call
+                && walk_context.as_ref().is_some_and(|context| context.halts(arch, &code_space, &c.flows));
+            if let Some(fall) = c.fall_through.filter(|_| !halts) {
                 // Fall-through is not a reference; it is only a walk successor.
                 let fall_mode = walk_context.as_ref()
-                    .and_then(|context| context.successor(fall, mode, &commits));
+                    .and_then(|context| context.successor(fall, context.carried(fall, mode), &commits));
                 insn_queue.push_back((fall, fall_mode));
             }
 
