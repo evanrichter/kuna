@@ -427,3 +427,20 @@ fn macho_chained_inert_without_chained_fixups() {
         assert!(r.writes.is_empty() && r.const_ranges.is_empty(), "{name}");
     }
 }
+
+/// A `GLOB_DAT` against an `STT_GNU_IFUNC` symbol gets what the resolver returns,
+/// not the resolver's address, so its slot is neither written nor constant even
+/// though a defined `GLOB_DAT` outside RELRO otherwise is. The fixture's `.got`
+/// holds `plain` at 0x3210 and the IFUNC `chosen` at 0x3218, with no RELRO.
+#[test]
+fn ifunc_globdat_is_not_written_or_constant() {
+    let path = format!("{}/tests/fixtures/dynrelocs_ifunc_x86_64.so", env!("CARGO_MANIFEST_DIR"));
+    let bytes = std::fs::read(path).unwrap();
+    let r = run(&bytes);
+    assert_eq!(r.writes, vec![DynRelocWrite { vma: 0x3210, value: 0x1020, width: 8 }]);
+    assert_eq!(r.const_ranges, vec![(0x3210, 0x3217)]);
+
+    let file = object::File::parse(&*bytes).unwrap();
+    let chosen = fixup_sites(&file, &bytes).sites.into_iter().find(|s| s.vma == 0x3218).unwrap();
+    assert_eq!((chosen.kind, chosen.symbol.as_deref(), chosen.target), (FixupKind::Bind, Some("chosen"), None));
+}

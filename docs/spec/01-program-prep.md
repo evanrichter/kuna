@@ -2135,6 +2135,9 @@ funcsym stream:
   `-z now`, so a PIC read of a global through its slot folds to the global. A
   `JUMP_SLOT` or `RELATIVE` slot outside RELRO stays variable. x86-64 and
   AArch64 keep their eager slots inside RELRO.
+  A `GLOB_DAT` or `JUMP_SLOT` against an `STT_GNU_IFUNC` symbol is not written at
+  all: the symbol's value is its resolver, but the loader stores what the
+  resolver returns, so the slot stays unwritten and is never constant.
 
   A MIPS dynamic image relocates its primary GOT with no relocation records at
   all (glibc's `elf_machine_got_rel`), so the walk above never reaches it. Its

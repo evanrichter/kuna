@@ -1,0 +1,25 @@
+dynrelocs_ifunc_x86_64.so -- an x86-64 shared object with an R_X86_64_GLOB_DAT
+against an STT_GNU_IFUNC symbol (decompiler/crates/kuna-analysis/src/loader/
+kuna_dynrelocs.rs). The loader stores what the resolver returns in that slot,
+so dynrelocs must neither write the resolver's address there nor call the slot
+constant.
+
+What it is
+  Source: dynrelocs_ifunc.c. chosen is an IFUNC whose resolver is pick;
+  plain is an ordinary defined function. get_chosen and get_plain take their
+  addresses, so each gets a GLOB_DAT slot in .got (0x3218 and 0x3210).
+  Linked -z norelro so both slots lie outside PT_GNU_RELRO, where only the
+  GLOB_DAT rule can make a slot constant.
+
+Why it is vendored
+  The assertions read exact GOT addresses.
+
+Where it came from
+  gcc 16.2.0, GNU ld 2.46 (nixpkgs):
+
+      gcc -O2 -fPIC -shared -nostdlib -Wl,-z,norelro -Wl,--build-id=none \
+          -o dynrelocs_ifunc_x86_64.so dynrelocs_ifunc.c
+
+  sha256:
+    8ce16f92714c6190eb089558b6e832b36f09a9c90b3fb3db86206f139f2bbc62  dynrelocs_ifunc_x86_64.so
+  Never executed.
