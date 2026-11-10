@@ -27,6 +27,9 @@ mod setup_commands;
 #[path = "verify_fieldtokens.rs"]
 mod verify_fieldtokens;
 
+#[path = "verify_declhighs.rs"]
+mod verify_declhighs;
+
 #[path = "verify_memory_map.rs"]
 mod verify_memory_map;
 #[path = "verify_map_vectors.rs"]
