@@ -5407,7 +5407,6 @@ mod tests {
         let m = build_manager();
         let ram = space(&m, 2);
         let (mut db, g) = db_with_global(m.num_spaces());
-        use crate::dtype::TypeFactory;
         let types = crate::dtype::TypeFactoryImpl::new();
         types.set_default_alignment_map();
         types.set_core_type("undefined", 1, type_metatype::TYPE_UNKNOWN, false).unwrap();
